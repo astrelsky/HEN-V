@@ -1,3 +1,4 @@
+#include "elfldr.h"
 #include "libs.h"
 #include "memory.h"
 #include "module.h"
@@ -43,7 +44,7 @@
 #define LOOKUP_SYMBOL(resolver, sym) resolver_lookup_symbol(resolver, sym, strlen(sym))
 #define GET_LIB(pid, lib) get_module_handle(pid, lib, strlen(lib))
 
-typedef struct {
+typedef struct elf_loader {
 	tracer_t tracer;
 	resolver_t resolver;
 	uint8_t *buf;
@@ -106,8 +107,10 @@ static const Elf64_Phdr *get_text_header(elf_loader_t *self) {
 	const Elf64_Ehdr *const restrict elf = get_elf_header(self);
 	for (ssize_t i = 0; i < elf->e_phnum; i++) {
 		if (phdrs[i].p_flags & PF_X) {
-			self->text_index = i;
-			return phdrs + self->text_index;
+			if (phdrs[i].p_paddr <= elf->e_entry && (phdrs[i].p_paddr + phdrs[i].p_filesz) < elf->e_entry) {
+				self->text_index = i;
+				return phdrs + self->text_index;
+			}
 		}
 	}
 
@@ -696,51 +699,78 @@ static bool load_lib_sysmodule(elf_loader_t *restrict self) {
 
 bool run_elf(uint8_t *buf, int pid) {
 	elf_loader_t elf;
-	bool result = false;
 	if (elf_init(&elf, buf, pid)) {
 		puts("run_elf elf_init failed");
 		return false;
 	}
 
-	puts("processing dynamic table");
-	process_dynamic_table(&elf);
+	bool result = elf_loader_run(&elf);
 
-	puts("mapping elf memory");
-	if (!map_elf_memory(&elf)) {
-		goto done;
-	}
-
-	puts("loading libSysmodule");
-	if (!load_lib_sysmodule(&elf)) {
-		goto done;
-	}
-
-	puts("loading libraries");
-	if (!load_libraries(&elf)) {
-		goto done;
-	}
-
-	puts("processing relocations");
-	if (!elf_process_relocations(&elf)) {
-		goto done;
-	}
-
-	puts("setting up kernel rw");
-	uintptr_t args = setup_kernel_rw(&elf);
-	if (args == 0) {
-		puts("setup_kernel_rw failed");
-		goto done;
-	}
-
-	puts("loading elf into memory");
-	elf_load(&elf);
-
-	puts("starting");
-	result = elf_start(&elf, args);
-
-done:
 	if (elf_finalize(&elf)) {
 		puts("run_elf elf_finalize failed");
 	}
+
 	return result;
+}
+
+bool elf_loader_run(elf_loader_t *self) {
+
+	puts("processing dynamic table");
+	process_dynamic_table(self);
+
+	puts("mapping elf memory");
+	if (!map_elf_memory(self)) {
+		return false;
+	}
+
+	puts("loading libSysmodule");
+	if (!load_lib_sysmodule(self)) {
+		return false;
+	}
+
+	puts("loading libraries");
+	if (!load_libraries(self)) {
+		return false;
+	}
+
+	puts("processing relocations");
+	if (!elf_process_relocations(self)) {
+		return false;
+	}
+
+	puts("setting up kernel rw");
+	uintptr_t args = setup_kernel_rw(self);
+	if (args == 0) {
+		puts("setup_kernel_rw failed");
+		return false;
+	}
+
+	puts("loading elf into memory");
+	elf_load(self);
+
+	puts("starting");
+	return elf_start(self, args);
+}
+
+elf_loader_t *elf_loader_create(uint8_t *buf, int pid) {
+	elf_loader_t *self = malloc(sizeof(elf_loader_t));
+	if (elf_init(self, buf, pid)) {
+		puts("elf_loader_create elf_init failed");
+		return NULL;
+	}
+	return self;
+}
+
+void elf_loader_finalize(elf_loader_t *self) {
+	if (elf_finalize(self)) {
+		puts("run_elf elf_finalize failed");
+	}
+}
+
+void elf_loader_delete(elf_loader_t *self) {
+	if (self == NULL) {
+		return;
+	}
+	elf_loader_finalize(self);
+	free(self);
 }

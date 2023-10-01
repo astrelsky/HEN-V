@@ -1,14 +1,20 @@
 #include "chan.h"
+#include "ipc.h"
+#include "elfldr.h"
 #include "libs.h"
+#include "module.h"
 #include "proc.h"
 #include "tracer.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <machine/setjmp.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -20,6 +26,18 @@
 #define LOOP_BUILDER_TARGET_OFFSET 3
 #define USLEEP_NID "QcteRwbsnV0"
 #define ENTRYPOINT_OFFSET 0x70
+#define PATH_APPEND(path, fname) memcpy(path, fname, strlen(fname))
+
+static const struct event_thread_vtable g_ipc_event_thread_vtable;
+static sigjmp_buf ipc_jmpbuf;
+
+static const struct event_thread_vtable g_elfldr_thread_vtable;
+static sigjmp_buf elfldr_jmpbuf;
+
+typedef struct {
+	event_thread_t base;
+	elf_loader_t *elfldr;
+} elfldr_event_thread_t;
 
 extern int _write(int fd, const void *, size_t); // NOLINT
 extern ssize_t _read(int, void *, size_t); // NOLINT
@@ -103,18 +121,6 @@ static int network_listen(const char *soc_path) {
 	return s;
 }
 
-typedef struct {
-	const char *path;
-	int fd;
-	int conn;
-} ipc_socket_t;
-
-static ipc_socket_t g_ipc_socket = (ipc_socket_t) {
-	.path = NULL,
-	.fd = -1,
-	.conn = -1
-};
-
 static void ipc_socket_close(ipc_socket_t *restrict self) {
 	puts("ipc_socket_close");
 	if (self->conn != -1) {
@@ -128,13 +134,6 @@ static void ipc_socket_close(ipc_socket_t *restrict self) {
 	if (self->path != NULL) {
 		unlink(self->path);
 		self->path = NULL;
-	}
-}
-
-// TODO close this on segfault or whatever signal
-static void shutdown_ipc(void) {
-	if (g_ipc_socket.path != NULL) {
-		ipc_socket_close(&g_ipc_socket);
 	}
 }
 
@@ -155,181 +154,276 @@ typedef struct {
 } ipc_result_t;
 
 
-void *ipc_hook_thread(void *args) {
-	chan_t *restrict elf_loader = (chan_t *)args;
+static bool handle_app_launch(ipc_event_thread_t *self) {
+	ipc_result_t res;
+	if (_read(self->socket.conn, &res, sizeof(res)) == -1) {
+		puts("read failed");
+		ipc_socket_close(&self->socket);
+		return NULL;
+	}
+
+	if (res.cmd == PING) {
+		puts("ping received");
+		int reply = PONG;
+		if (_write(self->socket.conn, &reply, sizeof(reply)) == -1) {
+			puts("write failed");
+			ipc_socket_close(&self->socket);
+			return NULL;
+		}
+		if (_read(self->socket.conn, &res, sizeof(res)) == -1) {
+			puts("read failed");
+			ipc_socket_close(&self->socket);
+			return NULL;
+		}
+	}
+
+	if (res.cmd != PROCESS_LAUNCHED) {
+		puts("not launched");
+		ipc_socket_close(&self->socket);
+		return NULL;
+	}
+
+	puts("next");
+
+	if (res.func == 0) {
+		// this is only a notification that an app has launched, no elf loading
+		return NULL;
+	}
+
+	loop_builder_t loop;
+	loop_builder_init(&loop);
+	const int pid = res.pid;
+
+	tracer_t tracer;
+	if (tracer_init(&tracer, pid) < 0) {
+		puts("tracer init failed");
+		return NULL;
+	}
+
+	// TODO: yeet this to the elf loading thread
+
+	reg_t regs;
+	if (tracer_get_registers(&tracer, &regs)) {
+		puts("failed to get registers");
+		tracer_finalize(&tracer);
+		return NULL;
+	}
+
+	regs.r_rip = (register_t) res.func;
+	printf("setting rip to 0x%08llx\n", res.func);
+	if (tracer_set_registers(&tracer, &regs)) {
+		puts("failed to set registers");
+		tracer_finalize(&tracer);
+		return NULL;
+	}
+
+	puts("running until execve completes");
+
+	// run until execve completion
+	int state = tracer_continue(&tracer, true);
+
+	if (!WIFSTOPPED(state)) {
+		puts("process not stopped");
+		tracer_finalize(&tracer);
+		return NULL;
+	}
+
+	if (WSTOPSIG(state) != SIGTRAP) {
+		printf("process received signal %d but SIGTRAP was expected\n", WSTOPSIG(state));
+		tracer_finalize(&tracer);
+		return NULL;
+	}
+
+	puts("execve completed");
+
+	//printf("tracer_continue after execve returned state 0x%x\n", state);
+	//dump_state(state);
+
+	uintptr_t spawned = 0;
+	do { // NOLINT
+		spawned = get_proc(pid);
+		if (spawned == 0) {
+			if (!is_process_alive(pid)) {
+				puts("process died");
+				tracer_finalize(&tracer);
+				return NULL;
+			}
+		}
+	} while (spawned == 0);
+
+	uintptr_t libkernel = proc_get_lib(spawned, LIBKERNEL_HANDLE);
+	uintptr_t base = shared_lib_get_imagebase(libkernel);
+
+	printf("libkernel imagebase: 0x%08llx\n", base);
+
+	puts("spawned process obtained");
+
+	puts("success");
+
+	const uintptr_t usleep_address = get_usleep_address(spawned);
+
+	loop_builder_set_target(&loop, usleep_address);
+	uintptr_t eboot = proc_get_eboot(spawned);
+	base = shared_lib_get_imagebase(eboot);
+
+	printf("process imagebase 0x%08llx\n", base);
+
+	puts("patching entrypoint");
+
+	// force the entrypoint to an infinite loop so that it doesn't start until we're ready
+	userland_copyin(pid, loop.data, base + ENTRYPOINT_OFFSET, sizeof(loop.data));
+
+	puts("entrypoint patched");
+
+	puts("finishing process loading");
+
+	state = tracer_continue(&tracer, true);
+
+	if (!WIFSTOPPED(state)) {
+		puts("process not stopped");
+		tracer_finalize(&tracer);
+		return NULL;
+	}
+
+	if (WSTOPSIG(state) != SIGTRAP) {
+		printf("process received signal %d but SIGTRAP was expected\n", WSTOPSIG(state));
+		tracer_finalize(&tracer);
+		return NULL;
+	}
+
+	tracer_get_registers(&tracer, &regs);
+
+	if ((uintptr_t)regs.r_rip != (base + ENTRYPOINT_OFFSET + 1)) {
+		puts("unexpected rip value, something went wrong");
+	} else {
+		puts("process loaded successfully");
+	}
+
+	puts("finished");
+	printf("spawned imagebase 0x%08llx\n", base);
+
+	tracer_finalize(&tracer);
+
+	// load elf in the elf loading thread
+	// get the elf loading channel from thread args
+	chan_send_int(self->base.channel, res.pid);
+	return true;
+}
+
+
+void *ipc_hook_thread(ipc_event_thread_t *self) {
 	printf("hook thread started\n");
 
-	ipc_socket_open(&g_ipc_socket, "/system_tmp/IPC");
-	if (g_ipc_socket.fd == -1) {
+	ipc_socket_open(&self->socket, "/system_tmp/IPC");
+	if (self->socket.fd == -1) {
 		puts("ipc_socket_open failed");
 		return NULL;
 	}
 
-	printf("listen done\n");
+	puts("listen done");
 
-	g_ipc_socket.conn = accept(g_ipc_socket.fd, NULL, NULL);
-	if (g_ipc_socket.conn == -1) {
+	self->socket.conn = accept(self->socket.fd, NULL, NULL);
+	if (self->socket.conn == -1) {
 		puts("accept failed");
-		ipc_socket_close(&g_ipc_socket);
+		ipc_socket_close(&self->socket);
 		return NULL;
 	}
 
 	puts("cli accepted");
 
 	while (true) {
-
-		ipc_result_t res;
-		if (_read(g_ipc_socket.conn, &res, sizeof(res)) == -1) {
-			puts("read failed");
-			ipc_socket_close(&g_ipc_socket);
-			return NULL;
+		if (!handle_app_launch(self)) {
+			puts("failed to handle app launch");
 		}
-
-		if (res.cmd == PING) {
-			puts("ping received");
-			int reply = PONG;
-			if (_write(g_ipc_socket.conn, &reply, sizeof(reply)) == -1) {
-				puts("write failed");
-				ipc_socket_close(&g_ipc_socket);
-				return NULL;
-			}
-			if (_read(g_ipc_socket.conn, &res, sizeof(res)) == -1) {
-				puts("read failed");
-				ipc_socket_close(&g_ipc_socket);
-				return NULL;
-			}
-		}
-
-		if (res.cmd != PROCESS_LAUNCHED) {
-			puts("not launched");
-			ipc_socket_close(&g_ipc_socket);
-			return NULL;
-		}
-
-		puts("next");
-
-		if (res.func == 0) {
-			// this is only a notification that an app has launched, no elf loading
-			return NULL;
-		}
-
-		loop_builder_t loop;
-		loop_builder_init(&loop);
-		const int pid = res.pid;
-
-		tracer_t tracer;
-		if (tracer_init(&tracer, pid) < 0) {
-			puts("tracer init failed");
-			return NULL;
-		}
-
-		reg_t regs;
-		if (tracer_get_registers(&tracer, &regs)) {
-			puts("failed to get registers");
-			tracer_finalize(&tracer);
-			return NULL;
-		}
-
-		regs.r_rip = (register_t) res.func;
-		printf("setting rip to 0x%08llx\n", res.func);
-		if (tracer_set_registers(&tracer, &regs)) {
-			puts("failed to set registers");
-			tracer_finalize(&tracer);
-			return NULL;
-		}
-
-		puts("running until execve completes");
-
-		// run until execve completion
-		int state = tracer_continue(&tracer, true);
-
-		if (!WIFSTOPPED(state)) {
-			puts("process not stopped");
-			tracer_finalize(&tracer);
-			return NULL;
-		}
-
-		if (WSTOPSIG(state) != SIGTRAP) {
-			printf("process received signal %d but SIGTRAP was expected\n", WSTOPSIG(state));
-			tracer_finalize(&tracer);
-			return NULL;
-		}
-
-		puts("execve completed");
-
-		//printf("tracer_continue after execve returned state 0x%x\n", state);
-		//dump_state(state);
-
-		uintptr_t spawned = 0;
-		do { // NOLINT
-			spawned = get_proc(pid);
-			if (spawned == 0) {
-				if (!is_process_alive(pid)) {
-					puts("process died");
-					tracer_finalize(&tracer);
-					return NULL;
-				}
-			}
-		} while (spawned == 0);
-
-		uintptr_t libkernel = proc_get_lib(spawned, LIBKERNEL_HANDLE);
-		uintptr_t base = shared_lib_get_imagebase(libkernel);
-
-		printf("libkernel imagebase: 0x%08llx\n", base);
-
-		puts("spawned process obtained");
-
-		puts("success");
-
-		// FIXME why did getting the nanosleep offset from *spawned crash
-		const uintptr_t usleep_address = get_usleep_address(spawned);
-
-		loop_builder_set_target(&loop, usleep_address);
-		uintptr_t eboot = proc_get_eboot(spawned);
-		base = shared_lib_get_imagebase(eboot);
-
-		printf("process imagebase 0x%08llx\n", base);
-
-		puts("patching entrypoint");
-
-		// force the entrypoint to an infinite loop so that it doesn't start until we're ready
-		userland_copyin(pid, loop.data, base + ENTRYPOINT_OFFSET, sizeof(loop.data));
-
-		puts("entrypoint patched");
-
-		puts("finishing process loading");
-
-		state = tracer_continue(&tracer, true);
-
-		if (!WIFSTOPPED(state)) {
-			puts("process not stopped");
-			tracer_finalize(&tracer);
-			return NULL;
-		}
-
-		if (WSTOPSIG(state) != SIGTRAP) {
-			printf("process received signal %d but SIGTRAP was expected\n", WSTOPSIG(state));
-			tracer_finalize(&tracer);
-			return NULL;
-		}
-
-		tracer_get_registers(&tracer, &regs);
-
-		if ((uintptr_t)regs.r_rip != (base + ENTRYPOINT_OFFSET + 1)) {
-			puts("unexpected rip value, something went wrong");
-		} else {
-			puts("process loaded successfully");
-		}
-
-		puts("finished");
-		printf("spawned imagebase 0x%08llx\n", base);
-
-		tracer_finalize(&tracer);
-
-		// load elf in the elf loading thread
-		// get the elf loading channel from thread args
-		chan_send_int(elf_loader, res.pid);
 	}
 
 	return NULL;
 }
+
+bool load_elf(int pid) {
+	static module_info_t info;
+	if (get_module_info(pid, 0, &info) != 0) {
+		puts("get_module_info failed");
+		return false;
+	}
+
+	char *path = strrchr(info.sandboxed_path, '/');
+	if (path == NULL) {
+		printf("sandboxed path contains no folders? %s\n", info.sandboxed_path);
+		return false;
+	}
+	PATH_APPEND(path, "homebrew.elf");
+
+	struct stat st;
+	if (stat(info.sandboxed_path, &st) < 0) {
+		perror("load_elf stat");
+		return false;
+	}
+
+	void *buf = malloc(st.st_size);
+	if (buf == NULL) {
+		perror("load_elf impossible");
+		return false;
+	}
+
+	printf("opening %s\n", info.sandboxed_path);
+
+	int fd = open(info.sandboxed_path, O_RDONLY);
+	if (fd == -1) {
+		perror("load_elf open");
+		return false;
+	}
+
+	if (read(fd, buf, st.st_size) != st.st_size) {
+		perror("read failed");
+		return false;
+	}
+
+	if (!run_elf(buf, pid)) {
+		puts("run_elf failed");
+		return false;
+	}
+	return true;
+}
+
+void ipc_event_thread_init(ipc_event_thread_t *self) {
+	event_thread_init(&self->base, "SyscoreIpcThread", &ipc_jmpbuf, ipc_hook_thread);
+	self->base._vptr = &g_ipc_event_thread_vtable;
+}
+
+static void ipc_event_thread_reset(ipc_event_thread_t *self) {
+	// close this first since it is more important
+	ipc_socket_close(&self->socket);
+}
+
+static void ipc_event_thread_finalize(ipc_event_thread_t *self) {
+	// close this first since it is more important
+	ipc_socket_close(&self->socket);
+	event_thread_finalize(&self->base);
+}
+
+void elfldr_event_thread_init(elfldr_event_thread_t *self) {
+	event_thread_init(&self->base, "HenVElfLoaderThread", &elfldr_jmpbuf, ipc_hook_thread);
+	self->base._vptr = &g_elfldr_thread_vtable;
+}
+
+static void elfldr_event_thread_reset(elfldr_event_thread_t *self) {
+	elf_loader_delete(self->elfldr);
+	self->elfldr = NULL;
+}
+
+static void elfldr_event_thread_finalize(elfldr_event_thread_t *self) {
+	elf_loader_delete(self->elfldr);
+	self->elfldr = NULL;
+	event_thread_finalize(&self->base);
+}
+
+static const struct event_thread_vtable g_ipc_event_thread_vtable = {
+	.finalize = ipc_event_thread_finalize,
+	.reset = ipc_event_thread_reset,
+};
+
+static const struct event_thread_vtable g_elfldr_thread_vtable = {
+	.finalize = elfldr_event_thread_finalize,
+	.reset = elfldr_event_thread_reset,
+};

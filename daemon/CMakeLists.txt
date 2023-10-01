@@ -55,7 +55,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c17 -Wall -Wextra -Werror -pedantic-err
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPPR -DPS5 -DPS5_FW_VERSION=${V_FW}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_SOURCE -D_POSIX_C_SOURCE=200112 -D__BSD_VISIBLE=1 -D__XSI_VISIBLE=500")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin -nostdlib")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -fPIE")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -fPIE -Wno-incompatible-function-pointer-types")
 
 add_dependencies(${PROJECT_NAME} chan)
 add_dependencies(${PROJECT_NAME} NidResolver)

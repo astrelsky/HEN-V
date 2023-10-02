@@ -16,10 +16,11 @@ static event_thread_t *g_event_threads[] = {
 	NULL
 };
 
-void event_thread_init(event_thread_t *self, const char *name, sigjmp_buf *jmpbuf, thread_function_t fun) {
+void event_thread_init(event_thread_t *self, const char *name, struct event_thread_pool *pool, sigjmp_buf *jmpbuf, thread_function_t fun) {
 	*self = (event_thread_t) {
 		._vptr = &g_event_thread_vtable,
 		.name = name,
+		.pool = pool,
 		.channel = chan_init(DEFAULT_CHANNEL_CAPACITY),
 		.jmpbuf = jmpbuf,
 		.fun = fun,

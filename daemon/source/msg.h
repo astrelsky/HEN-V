@@ -1,6 +1,7 @@
 #pragma once
 
 #include "event.h"
+#include "pool.h"
 
 #include <stdint.h>
 
@@ -26,13 +27,5 @@ typedef enum homebrew_daemon_message_type {
 	BREW_MSG_TYPE_APP_LAUNCHED
 } homebrew_daemon_message_type_t;
 
-typedef struct {
-	event_thread_t base;
-} message_send_event_thread_t;
-
-typedef struct {
-	event_thread_t base;
-} message_recv_event_thread_t;
-
-void message_send_event_thread_init(message_send_event_thread_t *self);
-void message_recv_event_thread_init(message_recv_event_thread_t *self);
+event_thread_t *message_send_event_thread_new(event_thread_pool_t *pool);
+event_thread_t *message_recv_event_thread_new(event_thread_pool_t *pool);

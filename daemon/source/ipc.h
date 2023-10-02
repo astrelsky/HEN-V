@@ -1,16 +1,7 @@
 #pragma once
 
 #include "event.h"
+#include "pool.h"
 
-typedef struct {
-	const char *path;
-	int fd;
-	int conn;
-} ipc_socket_t;
-
-typedef struct {
-	event_thread_t base;
-	ipc_socket_t socket;
-} ipc_event_thread_t;
-
-void ipc_event_thread_init(ipc_event_thread_t *self);
+event_thread_t *ipc_event_thread_new(event_thread_pool_t *pool);
+event_thread_t *elfldr_event_thread_new(event_thread_pool_t *pool);

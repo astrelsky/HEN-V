@@ -2,12 +2,21 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static sigjmp_buf message_sender_buf;
 static sigjmp_buf message_receiver_buf;
 
 static const struct event_thread_vtable g_message_send_event_thread_vtable;
 static const struct event_thread_vtable g_message_recv_event_thread_vtable;
+
+typedef struct {
+	event_thread_t base;
+} message_send_event_thread_t;
+
+typedef struct {
+	event_thread_t base;
+} message_recv_event_thread_t;
 
 static void *message_sender(message_send_event_thread_t *self) {
 	while (true) {
@@ -40,14 +49,26 @@ static void *message_receiver(message_recv_event_thread_t *self) {
 	return NULL;
 }
 
-void message_send_event_thread_init(message_send_event_thread_t *self) {
-	event_thread_init(&self->base, "MessageSendThread", &message_sender_buf, message_sender);
+event_thread_t *message_send_event_thread_new(event_thread_pool_t *pool) {
+	message_send_event_thread_t *self = malloc(sizeof(message_send_event_thread_t));
+	if (self == NULL) {
+		perror("message_send_event_thread_new");
+		return NULL;
+	}
+	event_thread_init(&self->base, "MessageSendThread", pool, &message_sender_buf, message_sender);
 	self->base._vptr = &g_message_send_event_thread_vtable;
+	return &self->base;
 }
 
-void message_recv_event_thread_init(message_recv_event_thread_t *self) {
-	event_thread_init(&self->base, "MessageReceiveThread", &message_receiver_buf, message_receiver);
+event_thread_t *message_recv_event_thread_new(event_thread_pool_t *pool) {
+	message_recv_event_thread_t *self = malloc(sizeof(message_recv_event_thread_t));
+	if (self == NULL) {
+		perror("message_recv_event_thread_new");
+		return NULL;
+	}
+	event_thread_init(&self->base, "MessageReceiveThread", pool, &message_receiver_buf, message_receiver);
 	self->base._vptr = &g_message_recv_event_thread_vtable;
+	return &self->base;
 }
 
 // these don't hold anything that need to be cleaned up and the defaults are acceptable

@@ -1,7 +1,10 @@
-
-//extern int _sceApplicationGetAppId(int pid, uint32_t *appid); // NOLINT
-//extern int sceLncUtilGetAppTitleId(uint32_t appid, char *tid); // NOLINT
+#include "pool.h"
 
 int main(void) {
+	event_thread_pool_t *pool = event_thread_pool_new();
+	event_thread_pool_start(pool);
+	event_thread_pool_wait(pool);
+	event_thread_pool_join(pool);
+	event_thread_pool_delete(pool);
 	return 0;
 }

@@ -67,6 +67,10 @@ void event_thread_start(event_thread_t *self) {
 	pthread_create(&self->thread.td, NULL, self->fun, self);
 }
 
+void event_thread_join(event_thread_t *self) {
+	thread_join(&self->thread, NULL);
+}
+
 void event_thread_reset(event_thread_t *self) {
 	// do nothing by default
 	(void)self;

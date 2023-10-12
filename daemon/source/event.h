@@ -33,7 +33,6 @@ void event_thread_finalize(event_thread_t *self);
 void event_thread_reset(event_thread_t *self);
 void event_thread_restart(event_thread_t *self);
 
-void event_thread_close(event_thread_t *self);
 void event_thread_join(event_thread_t *self);
 
 void event_thread_signal_handler_init(void);
@@ -52,4 +51,8 @@ static inline int event_thread_send_u32(event_thread_t *self, uint32_t data) {
 
 static inline int event_thread_recv_u32(event_thread_t *self, uint32_t *data) {
 	return chan_recv_int32(self->channel, (int32_t *) data);
+}
+
+static inline void event_thread_close(event_thread_t *self) {
+	chan_close(self->channel);
 }

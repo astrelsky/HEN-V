@@ -44,6 +44,23 @@ static void *message_receiver(message_recv_event_thread_t *self) {
 			puts("sceAppMessagingReceiveMsg failed");
 			continue;
 		}
+		switch (msg.msgType) {
+			case BREW_MSG_TYPE_REGISTER_PREFIX_HANDLER: // NOLINT
+				// TODO
+				break;
+			case BREW_MSG_TYPE_REGISTER_LAUNCH_LISTENER:
+				// TODO
+				break;
+			case BREW_MSG_TYPE_APP_LAUNCHED:
+				// TODO
+				break;
+			case BREW_MSG_TYPE_KILL:
+				event_thread_pool_kill(self->base.pool);
+				break;
+			default:
+				printf("invalid message type 0x%08llx, message ignored\n", msg.msgType);
+				continue;
+		}
 	}
 
 	return NULL;

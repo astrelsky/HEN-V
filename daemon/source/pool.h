@@ -15,3 +15,4 @@ void event_thread_pool_join(event_thread_pool_t *self);
 void event_thread_pool_wait(event_thread_pool_t *self);
 void event_thread_pool_kill(event_thread_pool_t *self);
 void event_thread_pool_start(event_thread_pool_t *self);
+int event_thread_pool_send_notification(event_thread_pool_t *self, const char *msg, ...);

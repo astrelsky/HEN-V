@@ -12,10 +12,35 @@ typedef struct event_thread_pool {
 	event_thread_t *elfldr;
 	event_thread_t *msg_send;
 	event_thread_t *msg_recv;
-	event_thread_t *notif;
+	notif_send_event_thread_t *notif;
 
 	chan_t *done;
 } event_thread_pool_t;
+
+static void *delete_event_thread(void *self) {
+	if (self != NULL) {
+		((event_thread_t *)self)->_vptr->finalize(self);
+	}
+	return NULL;
+}
+
+static void start_event_thread(void *self) {
+	if (self != NULL) {
+		event_thread_start((event_thread_t *)self);
+	}
+}
+
+static void close_event_thread(void *self) {
+	if (self != NULL) {
+		event_thread_close((event_thread_t *)self);
+	}
+}
+
+static void start_event_join(void *self) {
+	if (self != NULL) {
+		event_thread_join((event_thread_t *)self);
+	}
+}
 
 event_thread_pool_t *event_thread_pool_new(void) {
 	event_thread_pool_t *self = malloc(sizeof(event_thread_pool_t));
@@ -34,13 +59,6 @@ event_thread_pool_t *event_thread_pool_new(void) {
 	};
 
 	return self;
-}
-
-static void *delete_event_thread(event_thread_t *self) {
-	if (self != NULL) {
-		self->_vptr->finalize(self);
-	}
-	return NULL;
 }
 
 void event_thread_pool_delete(event_thread_pool_t *self) {
@@ -71,11 +89,11 @@ event_thread_t *event_thread_pool_get_msg_send_thread(event_thread_pool_t *self)
 }
 
 void event_thread_pool_start(event_thread_pool_t *self) {
-	event_thread_start(self->ipc);
-	event_thread_start(self->elfldr);
-	event_thread_start(self->msg_send);
-	event_thread_start(self->msg_recv);
-	event_thread_start(self->notif);
+	start_event_thread(self->ipc);
+	start_event_thread(self->elfldr);
+	start_event_thread(self->msg_send);
+	start_event_thread(self->msg_recv);
+	start_event_thread(self->notif);
 }
 
 void event_thread_pool_wait(event_thread_pool_t *self) {
@@ -84,19 +102,27 @@ void event_thread_pool_wait(event_thread_pool_t *self) {
 }
 
 void event_thread_pool_join(event_thread_pool_t *self) {
-	event_thread_close(self->ipc);
-	event_thread_close(self->elfldr);
-	event_thread_close(self->msg_send);
-	event_thread_close(self->msg_recv);
-	event_thread_close(self->notif);
+	close_event_thread(self->ipc);
+	close_event_thread(self->elfldr);
+	close_event_thread(self->msg_send);
+	close_event_thread(self->msg_recv);
+	close_event_thread(self->notif);
 
-	event_thread_join(self->ipc);
-	event_thread_join(self->elfldr);
-	event_thread_join(self->msg_send);
-	event_thread_join(self->msg_recv);
-	event_thread_join(self->notif);
+	start_event_join(self->ipc);
+	start_event_join(self->elfldr);
+	start_event_join(self->msg_send);
+	start_event_join(self->msg_recv);
+	start_event_join(self->notif);
 }
 
 void event_thread_pool_kill(event_thread_pool_t *self) {
 	chan_send_int(self->done, 1);
+}
+
+int event_thread_pool_send_notification(event_thread_pool_t *self, const char *msg, ...) {
+	va_list arg;
+	va_start(arg, msg);
+	int err = notif_send_event_thread_vprintf(self->notif, msg, arg);
+	va_end(arg);
+	return err;
 }

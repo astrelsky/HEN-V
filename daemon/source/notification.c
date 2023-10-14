@@ -40,7 +40,7 @@ extern int sceKernelSendNotificationRequest(int device, SceNotificationRequest *
 
 typedef struct notif_send_event_thread_t {
 	event_thread_t base;
-	_Atomic(const char *) msg;
+	_Atomic(char *) msg;
 } notif_send_event_thread_t;
 
 static void *notification_send_thread(notif_send_event_thread_t *self) {

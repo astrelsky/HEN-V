@@ -10,7 +10,7 @@
 typedef struct event_thread_pool {
 	event_thread_t *ipc;
 	event_thread_t *elfldr;
-	event_thread_t *msg_send;
+	message_send_event_thread_t *msg_send;
 	event_thread_t *msg_recv;
 	notif_send_event_thread_t *notif;
 
@@ -84,10 +84,6 @@ event_thread_t *event_thread_pool_get_elfldr_thread(event_thread_pool_t *self) {
 	return self->elfldr;
 }
 
-event_thread_t *event_thread_pool_get_msg_send_thread(event_thread_pool_t *self) {
-	return self->msg_send;
-}
-
 void event_thread_pool_start(event_thread_pool_t *self) {
 	start_event_thread(self->ipc);
 	start_event_thread(self->elfldr);
@@ -125,4 +121,8 @@ int event_thread_pool_send_notification(event_thread_pool_t *self, const char *m
 	int err = notif_send_event_thread_vprintf(self->notif, msg, arg);
 	va_end(arg);
 	return err;
+}
+
+int event_thread_pool_send_message(event_thread_pool_t *self, uint32_t appId, uint32_t msgType, const void *msg, size_t msgLength, uint32_t flags) {
+	return message_send_event_thread_send_message(self->msg_send, appId, msgType, msg, msgLength, flags);
 }

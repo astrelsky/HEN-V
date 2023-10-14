@@ -3,6 +3,7 @@
 #include "elfldr.h"
 #include "libs.h"
 #include "module.h"
+#include "msg.h"
 #include "proc.h"
 #include "tracer.h"
 
@@ -11,6 +12,7 @@
 #include <machine/setjmp.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -28,6 +30,8 @@
 #define USLEEP_NID "QcteRwbsnV0"
 #define ENTRYPOINT_OFFSET 0x70
 #define PATH_APPEND(path, fname) memcpy(path, fname, strlen(fname))
+
+extern int _sceApplicationGetAppId(int pid, uint32_t *appid); // NOLINT
 
 static const struct event_thread_vtable g_ipc_event_thread_vtable;
 static sigjmp_buf ipc_jmpbuf;
@@ -88,6 +92,16 @@ static uint8_t SLEEP_LOOP[] = {
 };
 
 // NOLINTEND(readability-magic-numbers)
+
+static inline uint32_t get_app_id(void) {
+	static uint32_t appid = 0;
+	if (appid != 0) {
+		return appid;
+	}
+
+	_sceApplicationGetAppId(getpid(), &appid);
+	return appid;
+}
 
 static int tracer_delete(tracer_t *self) {
 	if (self == NULL) {
@@ -179,6 +193,11 @@ static bool is_process_alive(int pid) {
 	return sysctl(mib, 4, NULL, NULL, NULL, 0) == 0;
 }
 
+static void send_launched_message(int pid) {
+	// this is sent over the app messaging interface to keep things thread safe
+	sceAppMessagingSendMsg(get_app_id(), BREW_MSG_TYPE_APP_LAUNCHED, &pid, sizeof(pid), 0);
+}
+
 static int handle_app_launch(ipc_event_thread_t *self) {
 	ipc_result_t res;
 	if (_read(self->socket.conn, &res, sizeof(res)) == -1) {
@@ -206,12 +225,14 @@ static int handle_app_launch(ipc_event_thread_t *self) {
 
 	puts("next");
 
+	const int pid = res.pid;
+
+	send_launched_message(pid);
+
 	if (res.func == 0) {
 		// this is only a notification that an app has launched, no elf loading
 		return 0;
 	}
-
-	const int pid = res.pid;
 
 	prep_process_args_t *args = malloc(sizeof(prep_process_args_t));
 	if (args == NULL) {

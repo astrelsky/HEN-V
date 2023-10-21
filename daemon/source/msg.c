@@ -107,7 +107,7 @@ static void message_recv_event_thread_init(message_recv_event_thread_t *self, ev
 	event_thread_init(&self->base, "MessageReceiveThread", pool, &message_receiver_buf, message_receiver);
 	self->base._vptr = &g_message_recv_event_thread_vtable;
 	atomic_init(&self->listeners, NULL);
-	atomic_exchange(&self->listeners, set_uint_new());
+	atomic_exchange(&self->listeners, set_uint_new(VECTOR_UINT_DEFAULT_CAPACITY));
 }
 
 static void message_recv_event_thread_finalize(message_recv_event_thread_t *self) {

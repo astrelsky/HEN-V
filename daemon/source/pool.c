@@ -13,7 +13,6 @@ typedef struct event_thread_pool {
 	message_send_event_thread_t *msg_send;
 	event_thread_t *msg_recv;
 	notif_send_event_thread_t *notif;
-
 	chan_t *done;
 } event_thread_pool_t;
 

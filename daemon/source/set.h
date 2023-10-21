@@ -2,21 +2,22 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 // NOLINTBEGIN(concurrency-mt-unsafe)
 
-#define VECTOR_UINT_DEFAULT_CAPACITY (16/sizeof(unsigned int))
+#define VECTOR_UINT_DEFAULT_CAPACITY (16/sizeof(uint32_t))
 
 typedef struct {
-	unsigned int *first;
-	unsigned int *last;
-	unsigned int *eos;
+	uint32_t *first;
+	uint32_t *last;
+	uint32_t *eos;
 } set_uint_t;
 
-static inline void set_uint_init(set_uint_t *restrict self) {
-	self->first = malloc(VECTOR_UINT_DEFAULT_CAPACITY * sizeof(unsigned int));
+static inline void set_uint_init(set_uint_t *restrict self, size_t capacity) {
+	self->first = malloc(capacity * sizeof(uint32_t));
 	self->last = self->first;
 	self->eos = self->first;
 }
@@ -26,9 +27,9 @@ static inline void set_uint_finalize(set_uint_t *restrict self) {
 	self->first = NULL;
 }
 
-static inline set_uint_t *set_uint_new(void) {
+static inline set_uint_t *set_uint_new(size_t capacity) {
 	set_uint_t *self = malloc(sizeof(set_uint_t));
-	set_uint_init(self);
+	set_uint_init(self, capacity);
 	return self;
 }
 
@@ -47,7 +48,7 @@ static inline size_t set_uint_length(const set_uint_t *restrict self) {
 	return self->last - self->first;
 }
 
-static inline long set_uint_find(const set_uint_t *restrict self, unsigned int value) {
+static inline long set_uint_find(const set_uint_t *restrict self, uint32_t value) {
 	const size_t length = set_uint_length(self);
 	long lo = 0;
 	long hi = ((long)length) - 1;
@@ -71,7 +72,7 @@ static inline long set_uint_find(const set_uint_t *restrict self, unsigned int v
 
 static inline void set_uint_grow(set_uint_t *restrict self, size_t n) {
 	const size_t length = set_uint_length(self);
-	unsigned int *ptr = realloc(self->first, (length + n) * sizeof(unsigned int));
+	uint32_t *ptr = realloc(self->first, (length + n) * sizeof(uint32_t));
 	if (ptr == NULL) {
 		exit(ENOMEM);
 	}
@@ -80,7 +81,7 @@ static inline void set_uint_grow(set_uint_t *restrict self, size_t n) {
 	self->eos = self->last + n;
 }
 
-static inline void set_uint_add(set_uint_t *restrict self, unsigned int value) {
+static inline void set_uint_add(set_uint_t *restrict self, uint32_t value) {
 	long i = set_uint_find(self, value);
 	if (i >= 0) {
 		return;
@@ -97,14 +98,14 @@ static inline void set_uint_add(set_uint_t *restrict self, unsigned int value) {
 	self->first[i] = value;
 }
 
-static inline unsigned int set_uint_remove(set_uint_t *restrict self, size_t i) {
-	unsigned int value = self->first[i];
+static inline uint32_t set_uint_remove(set_uint_t *restrict self, size_t i) {
+	uint32_t value = self->first[i];
 	memcpy(self->first + i, self->first + i + 1, self->last - (self->first + i + 1));
 	--self->last;
 	return value;
 }
 
-static inline bool set_uint_contains(const set_uint_t *restrict self, unsigned int value) {
+static inline bool set_uint_contains(const set_uint_t *restrict self, uint32_t value) {
 	return set_uint_find(self, value) >= 0;
 }
 

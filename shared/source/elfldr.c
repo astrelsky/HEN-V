@@ -117,6 +117,22 @@ static const Elf64_Phdr *get_text_header(elf_loader_t *self) {
 	return NULL;
 }
 
+static void *to_file_offset(elf_loader_t *restrict self, uintptr_t addr) {
+	const Elf64_Phdr *restrict text = get_text_header(self);
+	if (addr >= text->p_vaddr)  {
+		return (void *) (addr - text->p_vaddr + text->p_offset); // NOLINT(performance-no-int-to-ptr)
+	}
+	return (void *) addr; // NOLINT(performance-no-int-to-ptr)
+}
+
+static uintptr_t to_virtual_address(elf_loader_t *restrict self, uintptr_t addr) {
+	const Elf64_Phdr *restrict text = get_text_header(self);
+	if (addr >= text->p_vaddr)  {
+		addr -= text->p_vaddr + text->p_offset;
+	}
+	return self->imagebase + addr;
+}
+
 static bool is_loadable(const Elf64_Phdr *phdr) {
 	return phdr->p_type == PT_LOAD || phdr->p_type == PT_GNU_EH_FRAME;
 }
@@ -299,7 +315,7 @@ static bool map_elf_memory(elf_loader_t *restrict self) {
 
 	for (ssize_t i = 0; i < elf->e_phnum; i++) {
 		uintptr_t res;
-		const uintptr_t addr = self->imagebase + phdrs[i].p_paddr;
+		const uintptr_t addr = to_virtual_address(self, phdrs[i].p_paddr);
 		const size_t size = page_align(phdrs[i].p_memsz);
 		const int prot = to_mmap_prot(phdrs + i);
 		const int flags = i == self->text_index ? MMAP_TEXT_FLAGS : MMAP_DATA_FLAGS;
@@ -332,7 +348,6 @@ static uintptr_t get_symbol_address(elf_loader_t *restrict self, const Elf64_Rel
 }
 
 static bool elf_process_plt_relocations(elf_loader_t *restrict self) {
-	uint8_t *const image = self->buf + get_text_header(self)->p_offset;
 	for (size_t i = 0; i < self->plttab_size; i++) {
 		const Elf64_Rela *restrict plt = self->plttab + i;
 		if ((ELF64_R_TYPE(plt->r_info)) != R_X86_64_JMP_SLOT) {
@@ -347,7 +362,7 @@ static bool elf_process_plt_relocations(elf_loader_t *restrict self) {
 		if (libsym == 0) {
 			return false;
 		}
-		*(uintptr_t*)(image + plt->r_offset) = libsym;
+		*(uintptr_t*)(to_file_offset(self, plt->r_offset)) = libsym;
 	}
 
 	return true;
@@ -357,7 +372,6 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 	if (self->reltab == NULL) {
 		return true;
 	}
-	uint8_t *const image = self->buf + get_text_header(self)->p_offset;
 	for (size_t i = 0; i < self->reltab_size; i++) {
 		const Elf64_Rela *restrict rel = self->reltab + i;
 		switch (ELF64_R_TYPE(rel->r_info)) {
@@ -367,7 +381,7 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 				if (libsym == 0) {
 					return false;
 				}
-				*(uintptr_t*)(image + rel->r_offset) = libsym + rel->r_addend;
+				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = libsym + rel->r_addend;
 				break;
 			}
 			case R_X86_64_GLOB_DAT: {
@@ -376,12 +390,12 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 				if (libsym == 0) {
 					return false;
 				}
-				*(uintptr_t*)(image + rel->r_offset) = libsym;
+				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = libsym;
 				break;
 			}
 			case R_X86_64_RELATIVE: {
 				// imagebase + addend
-				*(uintptr_t*)(image + rel->r_offset) = self->imagebase + rel->r_addend;
+				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = self->imagebase + rel->r_addend;
 				break;
 			}
 			case R_X86_64_JMP_SLOT: {
@@ -390,7 +404,7 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 				if (libsym == 0) {
 					return false;
 				}
-				*(uintptr_t*)(image + rel->r_offset) = libsym;
+				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = libsym;
 				break;
 			}
 			default: {

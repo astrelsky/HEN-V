@@ -21,3 +21,4 @@ stubber/main.exe
 stubber/out/
 assets/
 homebrew/
+go.sum

@@ -40,6 +40,8 @@ void jailbreak_process(uintptr_t proc, bool escapeSandbox) {
 	copyin(ucred + 0x60, &caps_store, 0x8);		 // cr_sceCaps[0]
 	copyin(ucred + 0x68, &caps_store, 0x8);		 // cr_sceCaps[1]
 	copyin(ucred + 0x83, attr_store, 0x1);		 // cr_sceAttr[0]
+
+	free(rootvnode_area_store);
 }
 
 // NOLINTEND(readability-magic-numbers)

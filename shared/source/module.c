@@ -33,6 +33,7 @@ static int dl_get_info_2(int pid, uint32_t sandboxed_path, int64_t handle, modul
 }
 
 static int dl_get_list(int pid, int64_t *handles, uint32_t max_handles, uint32_t *num_handles) {
+	// this actually only needs system ucred
 	const uintptr_t ucred = get_current_ucred();
 	uint64_t id = ucred_swap_authid(ucred, DEBUGGER_AUTHID);
 	int res = do_dl_get_list(pid, handles, max_handles, num_handles);

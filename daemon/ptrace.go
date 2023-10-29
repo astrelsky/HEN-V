@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -63,6 +64,12 @@ const (
 	PT_WRITE_I        = 0x4
 )
 
+const (
+	_SYSCALL_OFFSET   = 10
+	_GET_AUTHINFO_NID = "igMefp4SAv0"
+	_ERRNO_NID        = "9BcDykPmo1I"
+)
+
 type Tracer struct {
 	syscall_addr   uintptr
 	libkernel_base uintptr
@@ -121,17 +128,13 @@ func NewTracer(pid int) (*Tracer, error) {
 	return tracer, nil
 }
 
-func (tracer *Tracer) Close() error {
+func (tracer *Tracer) Detach() error {
 	var err error
 	if tracer.pid != 0 {
 		err = tracer.ptrace(PT_DETACH, 0, 0)
 		tracer.pid = 0
 	}
 	return err
-}
-
-func (tracer *Tracer) Detach() error {
-	return tracer.Close()
 }
 
 func (tracer *Tracer) ptrace(request int, addr uintptr, data int) (err error) {
@@ -238,7 +241,7 @@ func _set_args(regs *Reg, a, b, c, d, e, f uintptr) {
 	regs.R9 = int64(f)
 }
 
-func (tracer *Tracer) call(addr uintptr, a, b, c, d, e, f uintptr) (int, error) {
+func (tracer *Tracer) Call(addr uintptr, a, b, c, d, e, f uintptr) (int, error) {
 	if addr == 0 {
 		return 0, syscall.EINVAL
 	}
@@ -313,4 +316,184 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	}
 
 	return int(jmp.Rax), nil
+}
+
+func (tracer *Tracer) startSyscall(backup *Reg, jmp *Reg) (int, error) {
+	if tracer.syscall_addr == 0 {
+		proc := GetProc(tracer.pid)
+		if proc == 0 {
+			return 0, errors.New("tracer.startSyscall failed to get traced proc")
+		}
+		lib := proc.GetLib(LIBKERNEL_HANDLE)
+		if lib == 0 {
+			return 0, errors.New("tracer.startSyscall failed to get libkernel for traced proc")
+		}
+		addr := lib.GetAddress(_GET_AUTHINFO_NID)
+		if addr == 0 {
+			return 0, errors.New("tracer.startSyscall failed to get syscall address for traced proc")
+		}
+		tracer.syscall_addr = addr + _SYSCALL_OFFSET
+	}
+
+	jmp.Rip = int64(tracer.syscall_addr)
+
+	err := tracer.SetRegisters(jmp)
+
+	if err != nil {
+		log.Print(err)
+		return 0, errors.New("tracer.startSyscall set registers failed")
+	}
+
+	// execute the syscall instruction
+	err = tracer.Step()
+	if err != nil {
+		log.Print(err)
+		err2 := tracer.SetRegisters(backup)
+		if err2 != nil {
+			log.Print(err2)
+		}
+		return 0, errors.New("tracer.startSyscall Step failed")
+	}
+
+	err = tracer.GetRegisters(jmp)
+
+	if err != nil {
+		log.Print(err)
+		return 0, errors.New("tracer.startSyscall get registers failed")
+	}
+
+	// restore registers
+	err = tracer.SetRegisters(backup)
+	if err != nil {
+		log.Print(err)
+		return 0, errors.New("tracer.startSyscall set registers failed")
+	}
+
+	return int(jmp.Rax), nil
+}
+
+func (tracer *Tracer) Syscall(num int, a, b, c, d, e, f uintptr) (int, error) {
+	var jmp Reg
+	err := tracer.GetRegisters(&jmp)
+	if err != nil {
+		log.Print(err)
+		return 0, errors.New("tracer.Syscall get registers failed")
+	}
+
+	backup := jmp
+	_set_args(&jmp, a, b, c, d, e, f)
+	jmp.Rax = int64(num)
+	jmp.R10 = jmp.Rcx
+	return tracer.startSyscall(&backup, &jmp)
+}
+
+func (tracer *Tracer) Errno() error {
+	if tracer.errno_addr == 0 {
+		proc := GetProc(tracer.pid)
+		if proc == 0 {
+			log.Print("failed to get traced proc")
+			return nil
+		}
+		lib := proc.GetLib(LIBKERNEL_HANDLE)
+		if lib == 0 {
+			log.Print("failed to get libkernel for traced proc")
+			return nil
+		}
+		addr := lib.GetAddress(_ERRNO_NID)
+		if addr == 0 {
+			log.Print("failed to get errno address for traced proc")
+			return nil
+		}
+		tracer.errno_addr = addr
+	}
+	p_errno, _ := UserlandRead64(tracer.pid, tracer.errno_addr)
+
+	err, _ := UserlandRead32(tracer.pid, uintptr(p_errno))
+	return syscall.Errno(err)
+}
+
+func (tracer *Tracer) Perror(msg string) {
+	err := tracer.Errno()
+	if err != nil {
+		log.Printf("%s: %s\n", msg, err.Error())
+	}
+}
+
+func (tracer *Tracer) Pipe() (filedes [2]int, err error) {
+	filedes = [2]int{-1, -1}
+
+	var jmp Reg
+	err = tracer.GetRegisters(&jmp)
+	if err != nil {
+		return
+	}
+	backup := jmp
+
+	rsp := jmp.Rsp - 16
+	jmp.Rax = syscall.SYS_PIPE2
+	jmp.Rdi = rsp
+	jmp.Rsi = 0
+	_, err = tracer.startSyscall(&backup, &jmp)
+	if err != nil {
+		return
+	}
+
+	buf := make([]byte, 8)
+	_, err = UserlandCopyout(tracer.pid, uintptr(rsp), buf)
+	if err != nil {
+		return
+	}
+
+	filedes[0] = int(binary.LittleEndian.Uint64(buf))
+	filedes[1] = int(binary.LittleEndian.Uint64(buf[8:]))
+	return
+}
+
+func (tracer *Tracer) Setsockopt(s int, level int, optname int, optval unsafe.Pointer, optlen int) error {
+	var jmp Reg
+	err := tracer.GetRegisters(&jmp)
+	if err != nil {
+		return err
+	}
+
+	backup := jmp
+	rsp := jmp.Rsp - int64(optlen)
+	jmp.Rax = syscall.SYS_SETSOCKOPT
+	jmp.Rsp = rsp
+	jmp.Rdi = int64(s)
+	jmp.Rsi = int64(level)
+	jmp.Rdx = int64(optname)
+	jmp.R10 = rsp
+	jmp.R8 = int64(optlen)
+	UserlandCopyinUnsafe(tracer.pid, uintptr(rsp), optval, optlen)
+	_, err = tracer.startSyscall(&backup, &jmp)
+	return err
+}
+
+func (tracer *Tracer) JitshmCreate(name uintptr, size uint64, flags int32) (int, error) {
+	return tracer.Syscall(syscall.SYS_JITSHM_CREATE, name, uintptr(size), uintptr(flags), 0, 0, 0)
+}
+
+func (tracer *Tracer) JitshmAlias(fd int, flags int32) (int, error) {
+	return tracer.Syscall(syscall.SYS_JITSHM_ALIAS, uintptr(fd), uintptr(flags), 0, 0, 0, 0)
+}
+
+func (tracer *Tracer) Mmap(addr uintptr, len uint64, prot int32, flags int32, fd int, off int) (int, error) {
+	return tracer.Syscall(syscall.SYS_MMAP, addr, uintptr(len), uintptr(prot), uintptr(flags), uintptr(fd), uintptr(off))
+}
+
+func (tracer *Tracer) Munmap(addr uintptr, len uint64) (int, error) {
+	return tracer.Syscall(syscall.SYS_MUNMAP, addr, uintptr(len), 0, 0, 0, 0)
+}
+
+func (tracer *Tracer) Mprotect(addr uintptr, len uint64, prot int32) (int, error) {
+	return tracer.Syscall(syscall.SYS_MPROTECT, addr, uintptr(len), uintptr(prot), 0, 0, 0)
+}
+
+func (tracer *Tracer) Close(fd int) (int, error) {
+	return tracer.Syscall(syscall.SYS_CLOSE, uintptr(fd), 0, 0, 0, 0, 0)
+}
+
+func (tracer *Tracer) Socket(domain int, socktype int, protocol int) (int, error) {
+	return tracer.Syscall(syscall.SYS_SOCKET, uintptr(domain), uintptr(socktype), uintptr(protocol), 0, 0, 0)
 }

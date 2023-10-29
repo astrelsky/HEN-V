@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sync"
 	"syscall"
 )
 
@@ -21,8 +20,7 @@ type KProc uintptr
 type KFd uintptr
 
 var (
-	_currentProc    KProc = 0
-	_getCurrentProc       = sync.OnceValue(func() KProc { return GetProc(syscall.Getpid()) })
+	_currentProc KProc = GetProc(syscall.Getpid())
 )
 
 func _getFirstProc() KProc {
@@ -30,7 +28,7 @@ func _getFirstProc() KProc {
 }
 
 func (proc KProc) next() KProc {
-	return KProc(kread64(proc))
+	return KProc(kread64(uintptr(proc)))
 }
 
 func GetProc(pid int) KProc {
@@ -44,35 +42,35 @@ func GetProc(pid int) KProc {
 }
 
 func GetCurrentProc() KProc {
-	return _getCurrentProc()
+	return _currentProc
 }
 
 func (proc KProc) GetUcred() KUcred {
-	return KUcred(kread64(proc + _PROC_UCRED_OFFSET))
+	return KUcred(kread64(uintptr(proc) + _PROC_UCRED_OFFSET))
 }
 
 func (proc KProc) GetPid() int {
-	return int(kread32(proc + _PROC_PID_OFFSET))
+	return int(kread32(uintptr(proc) + _PROC_PID_OFFSET))
 }
 
 func (proc KProc) GetFd() KFd {
-	return KFd(kread64(proc + _PROC_FD_OFFSET))
+	return KFd(kread64(uintptr(proc) + _PROC_FD_OFFSET))
 }
 
 func (fd KFd) GetRdir() uint64 {
-	return kread64(fd + _FD_RDIR_OFFSET)
+	return kread64(uintptr(fd) + _FD_RDIR_OFFSET)
 }
 
 func (fd KFd) GetJdir() uint64 {
-	return kread64(fd + _FD_JDIR_OFFSET)
+	return kread64(uintptr(fd) + _FD_JDIR_OFFSET)
 }
 
 func (fd KFd) SetRdir(value uint64) {
-	kwrite64(fd+_FD_RDIR_OFFSET, value)
+	kwrite64(uintptr(fd)+_FD_RDIR_OFFSET, value)
 }
 
 func (fd KFd) SetJdir(value uint64) {
-	kwrite64(fd+_FD_JDIR_OFFSET, value)
+	kwrite64(uintptr(fd)+_FD_JDIR_OFFSET, value)
 }
 
 func (proc KProc) Jailbreak(escapeSandbox bool) {
@@ -97,11 +95,11 @@ func (proc KProc) Jailbreak(escapeSandbox bool) {
 	// Escalate sony privileges
 	ucred.SetAuthId(JAILBREAK_AUTHID)
 	ucred.SetSceCaps(^uint64(0), ^uint64(0))
-	KernelCopyin(ucred+0x83, attr_store[0:1]) // cr_sceAttr[0]
+	KernelCopyin(uintptr(ucred)+0x83, attr_store[0:1]) // cr_sceAttr[0]
 }
 
 func (proc KProc) GetSharedObject() SharedObject {
-	return SharedObject(kread64(proc + _PROC_SHARED_OBJECT_OFFSET))
+	return SharedObject(kread64(uintptr(proc) + _PROC_SHARED_OBJECT_OFFSET))
 }
 
 func (proc KProc) GetLib(handle int) SharedLib {

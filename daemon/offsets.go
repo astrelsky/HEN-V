@@ -23,7 +23,7 @@ var (
 	_allprocOffset uintptr = 0
 )
 
-func get_system_software_version() uint32 {
+func GetSystemSoftwareVersion() uint32 {
 	if _version != 0 {
 		return _version
 	}
@@ -40,7 +40,7 @@ func GetAllprocOffset() uintptr {
 		return _allprocOffset
 	}
 
-	version := get_system_software_version() & VERSION_MASK
+	version := GetSystemSoftwareVersion() & VERSION_MASK
 
 	switch version {
 	case V300:
@@ -68,8 +68,8 @@ func GetAllprocOffset() uintptr {
 	return _allprocOffset
 }
 
-func get_security_flags_offset() uintptr {
-	version := get_system_software_version() & VERSION_MASK
+func GetSecurityFlagsOffset() uintptr {
+	version := GetSystemSoftwareVersion() & VERSION_MASK
 	switch version {
 	case V300:
 		fallthrough
@@ -94,8 +94,8 @@ func get_security_flags_offset() uintptr {
 	}
 }
 
-func get_qa_flags_offset() uintptr {
-	version := get_system_software_version() & VERSION_MASK
+func GetQaFlagsOffset() uintptr {
+	version := GetSystemSoftwareVersion() & VERSION_MASK
 	switch version {
 	case V300:
 		fallthrough
@@ -120,8 +120,8 @@ func get_qa_flags_offset() uintptr {
 	}
 }
 
-func get_utoken_flags_offset() uintptr {
-	version := get_system_software_version() & VERSION_MASK
+func GetUtokenFlagsOffset() uintptr {
+	version := GetSystemSoftwareVersion() & VERSION_MASK
 	switch version {
 	case V300:
 		fallthrough
@@ -147,7 +147,7 @@ func get_utoken_flags_offset() uintptr {
 }
 
 func GetRootVnodeOffset() uintptr {
-	version := get_system_software_version() & VERSION_MASK
+	version := GetSystemSoftwareVersion() & VERSION_MASK
 	switch version {
 	case V300:
 		fallthrough

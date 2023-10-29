@@ -6,8 +6,12 @@ import (
 	"syscall"
 )
 
-func main() {
+func init() {
 	log.SetFlags(log.Flags() | log.Lshortfile)
+}
+
+func main() {
+
 	println("Hello World")
 	handles, err := syscall.DynlibGetList()
 	if err != 0 {
@@ -21,4 +25,7 @@ func main() {
 		}
 		fmt.Printf("%s: %v\n", info.Name(), handle)
 	}
+
+	ldr := NewElfLoader(0, nil)
+	ldr.Run()
 }

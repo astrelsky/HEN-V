@@ -14,10 +14,13 @@ const (
 
 	_FD_RDIR_OFFSET = 0x10
 	_FD_JDIR_OFFSET = 0x18
+
+	_FILEDESCENT_LENGTH = 0x30
 )
 
 type KProc uintptr
 type KFd uintptr
+type KFdTbl uintptr
 
 var (
 	_currentProc KProc = GetProc(syscall.Getpid())
@@ -57,6 +60,10 @@ func (proc KProc) GetFd() KFd {
 	return KFd(kread64(uintptr(proc) + _PROC_FD_OFFSET))
 }
 
+func (fd KFd) GetFdTbl() KFdTbl {
+	return KFdTbl(kread64(uintptr(fd)))
+}
+
 func (fd KFd) GetRdir() uint64 {
 	return kread64(uintptr(fd) + _FD_RDIR_OFFSET)
 }
@@ -71,6 +78,15 @@ func (fd KFd) SetRdir(value uint64) {
 
 func (fd KFd) SetJdir(value uint64) {
 	kwrite64(uintptr(fd)+_FD_JDIR_OFFSET, value)
+}
+
+func (tbl KFdTbl) GetFile(fd int) uintptr {
+	fp := uintptr(tbl) + (uintptr(fd) * _FILEDESCENT_LENGTH) + 8
+	return uintptr(kread64(fp))
+}
+
+func (tbl KFdTbl) GetFileData(fd int) uint64 {
+	return kread64(tbl.GetFile(fd))
 }
 
 func (proc KProc) Jailbreak(escapeSandbox bool) {

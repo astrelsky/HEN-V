@@ -73,31 +73,6 @@ static const Elf64_Phdr *get_program_headers(const elf_loader_t *restrict self) 
 	return (Elf64_Phdr *) (self->buf + get_elf_header(self)->e_phoff);
 }
 
-static uintptr_t elf_get_proc(elf_loader_t *restrict self) {
-	if (self->proc != 0) {
-		return self->proc;
-	}
-	self->proc = get_proc(self->pid);
-	return self->proc;
-}
-
-static const Elf64_Dyn *get_dynamic_table(elf_loader_t *restrict self) {
-	const Elf64_Phdr *const restrict phdrs = get_program_headers(self);
-	if (self->dynamic_index >= 0) {
-		return (Elf64_Dyn *)(self->buf + phdrs[self->dynamic_index].p_offset);
-	}
-
-	const Elf64_Ehdr *const restrict elf = get_elf_header(self);
-	for (size_t i = 0; i < elf->e_phnum; i++) {
-		if (phdrs[i].p_type == PT_DYNAMIC) {
-			self->dynamic_index = (ssize_t)i;
-			return (Elf64_Dyn *)(self->buf + phdrs[i].p_offset);
-		}
-	}
-
-	return NULL;
-}
-
 static const Elf64_Phdr *get_text_header(elf_loader_t *self) {
 	const Elf64_Phdr *const restrict phdrs = get_program_headers(self);
 	if (self ->text_index != -1) {
@@ -124,6 +99,39 @@ static void *to_file_offset(elf_loader_t *restrict self, uintptr_t addr) {
 	}
 	return (void *) addr; // NOLINT(performance-no-int-to-ptr)
 }
+
+static void *faddr(elf_loader_t *restrict self, uintptr_t addr) {
+	return self->buf + (uintptr_t)to_file_offset(self, addr);
+}
+
+static uintptr_t elf_get_proc(elf_loader_t *restrict self) {
+	if (self->proc != 0) {
+		return self->proc;
+	}
+	self->proc = get_proc(self->pid);
+	return self->proc;
+}
+
+static const Elf64_Dyn *get_dynamic_table(elf_loader_t *restrict self) {
+	const Elf64_Phdr *const restrict phdrs = get_program_headers(self);
+	if (self->dynamic_index >= 0) {
+		return (Elf64_Dyn *)(self->buf + phdrs[self->dynamic_index].p_offset);
+	}
+
+	const Elf64_Ehdr *const restrict elf = get_elf_header(self);
+	for (size_t i = 0; i < elf->e_phnum; i++) {
+		if (phdrs[i].p_type == PT_DYNAMIC) {
+			self->dynamic_index = (ssize_t)i;
+			return (Elf64_Dyn *)(self->buf + phdrs[i].p_offset);
+		}
+	}
+
+	return NULL;
+}
+
+
+
+
 
 static uintptr_t to_virtual_address(elf_loader_t *restrict self, uintptr_t addr) {
 	const Elf64_Phdr *restrict text = get_text_header(self);
@@ -246,22 +254,22 @@ static void process_dynamic_table(elf_loader_t *restrict self) {
 	for (const Elf64_Dyn *restrict dyn = dyntab; dyn->d_tag != DT_NULL; dyn++) {
 		switch (dyn->d_tag) {
 			case DT_RELA:
-				self->reltab = (Elf64_Rela *)(self->buf + dyn->d_un.d_ptr);
+				self->reltab = (Elf64_Rela *)faddr(self, dyn->d_un.d_ptr);
 				break;
 			case DT_RELASZ:
 				self->reltab_size = dyn->d_un.d_val / sizeof(Elf64_Rela);
 				break;
 			case DT_JMPREL:
-				self->plttab = (Elf64_Rela *)(self->buf + dyn->d_un.d_ptr);
+				self->plttab = (Elf64_Rela *)faddr(self, dyn->d_un.d_ptr);
 				break;
 			case DT_PLTRELSZ:
 				self->plttab_size = dyn->d_un.d_val / sizeof(Elf64_Rela);
 				break;
 			case DT_SYMTAB:
-				self->symtab = (Elf64_Sym *)(self->buf + dyn->d_un.d_ptr);
+				self->symtab = (Elf64_Sym *)faddr(self, dyn->d_un.d_ptr);
 				break;
 			case DT_STRTAB:
-				self->strtab = (const char *)(self->buf + dyn->d_un.d_ptr);
+				self->strtab = (const char *)faddr(self, dyn->d_un.d_ptr);
 				break;
 			default:
 				break;
@@ -272,6 +280,7 @@ static void process_dynamic_table(elf_loader_t *restrict self) {
 static size_t get_text_size(elf_loader_t *restrict self) {
 	return page_align(get_text_header(self)->p_memsz);
 }
+
 
 static int to_mmap_prot(const Elf64_Phdr *phdr) {
 	int res = 0;
@@ -362,7 +371,7 @@ static bool elf_process_plt_relocations(elf_loader_t *restrict self) {
 		if (libsym == 0) {
 			return false;
 		}
-		*(uintptr_t*)(to_file_offset(self, plt->r_offset)) = libsym;
+		*(uintptr_t*)(faddr(self, plt->r_offset)) = libsym;
 	}
 
 	return true;
@@ -381,7 +390,7 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 				if (libsym == 0) {
 					return false;
 				}
-				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = libsym + rel->r_addend;
+				*(uintptr_t*)(faddr(self, rel->r_offset)) = libsym + rel->r_addend;
 				break;
 			}
 			case R_X86_64_GLOB_DAT: {
@@ -390,12 +399,12 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 				if (libsym == 0) {
 					return false;
 				}
-				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = libsym;
+				*(uintptr_t*)(faddr(self, rel->r_offset)) = libsym;
 				break;
 			}
 			case R_X86_64_RELATIVE: {
 				// imagebase + addend
-				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = self->imagebase + rel->r_addend;
+				*(uintptr_t*)(faddr(self, rel->r_offset)) = self->imagebase + rel->r_addend;
 				break;
 			}
 			case R_X86_64_JMP_SLOT: {
@@ -404,7 +413,7 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 				if (libsym == 0) {
 					return false;
 				}
-				*(uintptr_t*)(to_file_offset(self, rel->r_offset)) = libsym;
+				*(uintptr_t*)(faddr(self, rel->r_offset)) = libsym;
 				break;
 			}
 			default: {
@@ -640,14 +649,15 @@ static uintptr_t setup_kernel_rw(elf_loader_t *restrict self) {
 	return rsp;
 }
 
-static void elf_load(const elf_loader_t *restrict self) {
+static void elf_load(elf_loader_t *restrict self) {
 	const Elf64_Ehdr *const restrict elf = get_elf_header(self);
 	const Elf64_Phdr *const restrict begin = get_program_headers(self);
 	const Elf64_Phdr *const restrict end = begin + elf->e_phnum;
 
 	for (const Elf64_Phdr *restrict it = begin; it != end; it++) {
 		if (is_loadable(it)) {
-			userland_copyin(self->pid, self->buf + it->p_offset, self->imagebase + it->p_paddr, it->p_filesz);
+			uintptr_t vaddr = to_virtual_address(self, it->p_paddr);
+			userland_copyin(self->pid, self->buf + it->p_offset, vaddr, it->p_filesz);
 		}
 	}
 }
@@ -657,7 +667,7 @@ static void correct_rsp(reg_t *restrict regs) {
 	regs->r_rsp = (register_t) ((regs->r_rsp & mask) - sizeof(mask));
 }
 
-static bool elf_start(const elf_loader_t *restrict self, uintptr_t args) {
+static bool elf_start(elf_loader_t *restrict self, uintptr_t args) {
     printf("imagebase: 0x%08llx\n", self->imagebase);
 	reg_t regs;
 	if (tracer_get_registers(&self->tracer, &regs)) {
@@ -670,7 +680,7 @@ static bool elf_start(const elf_loader_t *restrict self, uintptr_t args) {
 	}
 	correct_rsp(&regs);
 	regs.r_rdi = (register_t) args;
-	regs.r_rip = (register_t) (self->imagebase + get_elf_header(self)->e_entry);
+	regs.r_rip = (register_t) to_virtual_address(self, get_elf_header(self)->e_entry);
 	if (tracer_set_registers(&self->tracer, &regs)) {
 		puts("elf_start failed to set registers");
 		return false;

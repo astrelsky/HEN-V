@@ -35,12 +35,9 @@ type ElfLoader struct {
 	resolver     Resolver
 	textIndex    int
 	dynamicIndex int
-	reltab       *uint8
-	reltabSize   uintptr
-	plttab       *uint8
-	plttabSize   uintptr
-	symtab       *uint8
-	symtabOffset int
+	reltab       []Elf64_Rela
+	plttab       []Elf64_Rela
+	symtab       []Elf64_Sym
 	strtab       *uint8
 	imagebase    uintptr
 	proc         KProc
@@ -64,9 +61,9 @@ func (ldr *ElfLoader) toFileOffset(addr int) int {
 	return addr
 }
 
-func (ldr *ElfLoader) faddr(addr int) *uint8 {
+func (ldr *ElfLoader) faddr(addr int) unsafe.Pointer {
 	addr = ldr.toFileOffset(addr)
-	return &ldr.data[addr]
+	return unsafe.Pointer(&ldr.data[addr])
 }
 
 func (ldr *ElfLoader) getProc() KProc {
@@ -111,26 +108,47 @@ func (ldr *ElfLoader) processDynamicTable() error {
 	if err != nil {
 		return err
 	}
+
+	var symtabOffset int
+	var reltabSize int
+	var plttabSize int
+	var reltab unsafe.Pointer
+	var plttab unsafe.Pointer
 	for ; dyn.Tag() != elf.DT_NULL; dyn = dyn.Next() {
 		switch dyn.Tag() {
 		case elf.DT_RELA:
-			ldr.reltab = ldr.faddr(dyn.Value())
+			reltab = ldr.faddr(dyn.Value())
 		case elf.DT_RELASZ:
-			const size = unsafe.Sizeof(Elf64_Rela{})
-			ldr.reltabSize = uintptr(dyn.Value()) / size
+			const size = int(unsafe.Sizeof(Elf64_Rela{}))
+			reltabSize = dyn.Value() / size
 		case elf.DT_JMPREL:
-			ldr.plttab = ldr.faddr(dyn.Value())
+			plttab = ldr.faddr(dyn.Value())
 		case elf.DT_PLTRELSZ:
-			const size = unsafe.Sizeof(Elf64_Rela{})
-			ldr.plttabSize = uintptr(dyn.Value()) / size
+			const size = int(unsafe.Sizeof(Elf64_Rela{}))
+			plttabSize = dyn.Value() / size
 		case elf.DT_SYMTAB:
-			ldr.symtabOffset = dyn.Value()
-			ldr.symtab = ldr.faddr(ldr.symtabOffset)
+			symtabOffset = dyn.Value()
 		case elf.DT_STRTAB:
-			ldr.strtab = ldr.faddr(dyn.Value())
+			ldr.strtab = (*byte)(ldr.faddr(dyn.Value()))
 		default:
 		}
 	}
+
+	if symtabOffset != 0 {
+		// just fake a symtab size to make a slice
+		symtab := ldr.faddr(symtabOffset)
+		symtabsize := (len(ldr.data) - symtabOffset) / int(unsafe.Sizeof(Elf64_Sym{}))
+		ldr.symtab = unsafe.Slice((*Elf64_Sym)(symtab), symtabsize)
+	}
+
+	if reltab != nil {
+		ldr.reltab = unsafe.Slice((*Elf64_Rela)(reltab), reltabSize)
+	}
+
+	if plttab != nil {
+		ldr.plttab = unsafe.Slice((*Elf64_Rela)(plttab), plttabSize)
+	}
+
 	return nil
 }
 
@@ -449,27 +467,8 @@ func (ldr *ElfLoader) loadLibraries() error {
 	return nil
 }
 
-func (ldr *ElfLoader) getPltTab() []Elf64_Rela {
-	return unsafe.Slice((*Elf64_Rela)(unsafe.Pointer(ldr.plttab)), ldr.plttabSize)
-}
-
-func (ldr *ElfLoader) getRelaTab() []Elf64_Rela {
-	return unsafe.Slice((*Elf64_Rela)(unsafe.Pointer(ldr.reltab)), ldr.reltabSize)
-}
-
-func (ldr *ElfLoader) getSymbol(i int) *Elf64_Sym {
-	const size = int(unsafe.Sizeof(Elf64_Sym{}))
-	return (*Elf64_Sym)(unsafe.Add(unsafe.Pointer(ldr.symtab), i*size))
-}
-
-func (ldr *ElfLoader) getSymTab() []Elf64_Sym {
-	// just fake a symtab size to make a slice
-	symtabsize := (len(ldr.data) - ldr.symtabOffset) / int(unsafe.Sizeof(Elf64_Sym{}))
-	return unsafe.Slice((*Elf64_Sym)(unsafe.Pointer(ldr.symtab)), symtabsize)
-}
-
 func (ldr *ElfLoader) getSymbolAddress(rel *Elf64_Rela) (uintptr, error) {
-	name := ldr.getString(int(ldr.getSymbol(rel.Symbol()).Name))
+	name := ldr.getString(int(ldr.symtab[rel.Symbol()].Name))
 	libsym := ldr.resolver.LookupSymbol(name)
 	if libsym == 0 {
 		return 0, fmt.Errorf("failed to find library symbol %s", name)
@@ -477,17 +476,15 @@ func (ldr *ElfLoader) getSymbolAddress(rel *Elf64_Rela) (uintptr, error) {
 	return libsym, nil
 }
 
-func (ldr *ElfLoader) toAddrPointer(addr int) *uintptr {
-	return (*uintptr)(unsafe.Pointer(ldr.faddr(addr)))
-}
-
 func (ldr *ElfLoader) processPltRelocations() error {
-	plttab := ldr.getPltTab()
-	symtab := ldr.getSymTab()
-	for i := range plttab {
-		plt := &plttab[i]
+	if ldr.plttab == nil {
+		return nil
+	}
+
+	for i := range ldr.plttab {
+		plt := &ldr.plttab[i]
 		if plt.Type() != elf.R_X86_64_JMP_SLOT {
-			sym := &symtab[plt.Symbol()]
+			sym := &ldr.symtab[plt.Symbol()]
 			name := ldr.getString(int(sym.Name))
 			return fmt.Errorf("unexpected relocation type %s for symbol %s\n", plt.Type().String(), name)
 		}
@@ -497,7 +494,7 @@ func (ldr *ElfLoader) processPltRelocations() error {
 			log.Println(err)
 			return err
 		}
-		*ldr.toAddrPointer(int(plt.r_offset)) = libsym
+		*(*uintptr)(ldr.faddr(int(plt.r_offset))) = libsym
 	}
 
 	return nil
@@ -507,9 +504,9 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 	if ldr.reltab == nil {
 		return nil
 	}
-	relatab := ldr.getRelaTab()
-	for i := range relatab {
-		rel := &relatab[i]
+
+	for i := range ldr.reltab {
+		rel := &ldr.reltab[i]
 		switch rel.Type() {
 		case elf.R_X86_64_64:
 			// symbol + addend
@@ -518,7 +515,7 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*ldr.toAddrPointer(int(rel.r_offset)) = libsym + uintptr(rel.r_addend)
+			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym + uintptr(rel.r_addend)
 
 		case elf.R_X86_64_GLOB_DAT:
 			// symbol
@@ -527,10 +524,10 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*ldr.toAddrPointer(int(rel.r_offset)) = libsym
+			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym
 		case elf.R_X86_64_RELATIVE:
 			// imagebase + addend
-			*ldr.toAddrPointer(int(rel.r_offset)) = ldr.imagebase + uintptr(rel.r_addend)
+			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = ldr.imagebase + uintptr(rel.r_addend)
 
 		case elf.R_X86_64_JMP_SLOT:
 			// edge case where the dynamic relocation sections are merged
@@ -539,9 +536,9 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*ldr.toAddrPointer(int(rel.r_offset)) = libsym
+			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym
 		default:
-			sym := ldr.getSymbol(rel.Symbol())
+			sym := &ldr.symtab[rel.Symbol()]
 			name := ldr.getString(int(sym.Name))
 			return fmt.Errorf("unexpected relocation type %s for symbol %s\n", rel.Type().String(), name)
 

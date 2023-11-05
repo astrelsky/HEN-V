@@ -125,3 +125,7 @@ func (proc KProc) GetLib(handle int) SharedLib {
 	}
 	return obj.GetLib(handle)
 }
+
+func (proc KProc) GetEboot() SharedLib {
+	return proc.GetLib(0)
+}

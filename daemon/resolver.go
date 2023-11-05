@@ -39,6 +39,12 @@ type Resolver struct {
 	libs []SymbolLookupTable
 }
 
+func NewResolver() Resolver {
+	return Resolver{
+		libs: make([]SymbolLookupTable, 3),
+	}
+}
+
 func NewNid(nid []byte, index int32) NidKeyValue {
 	data := nid[:11]
 	data = append(data, 0)

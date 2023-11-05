@@ -64,7 +64,7 @@ func (lib SharedLib) GetMetaData() SharedLibMetaData {
 	return SharedLibMetaData(kread64(uintptr(lib) + _SHARED_LIB_METADATA_OFFSET))
 }
 
-func (lib SharedLib) GetAddress(nid string) uintptr {
+func (lib SharedLib) GetAddress(nid Nid) uintptr {
 	meta := lib.GetMetaData()
 	if meta == 0 {
 		return 0
@@ -84,13 +84,13 @@ func (meta SharedLibMetaData) GetPltHelper() *RtldPltHelper {
 	res := &RtldPltHelper{}
 	err := KernelCopyoutStruct(uintptr(meta)+_METADATA_PLT_HELPER_OFFSET, res)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return nil
 	}
 	return res
 }
 
-func getSymbolAddress(helper *RtldPltHelper, imagebase uintptr, nid string) uintptr {
+func getSymbolAddress(helper *RtldPltHelper, imagebase uintptr, nid Nid) uintptr {
 	const symsize = unsafe.Sizeof(Elf64_Sym{})
 	numSymbls := int(helper.symtab_size / symsize)
 	symtab := make([]Elf64_Sym, numSymbls)
@@ -104,7 +104,7 @@ func getSymbolAddress(helper *RtldPltHelper, imagebase uintptr, nid string) uint
 	for i := 1; i < len(symtab); i++ {
 		offset := symtab[i].Name
 		sym := string(strtab[offset : offset+_NID_LENGTH])
-		if sym == nid {
+		if sym == string(nid) {
 			return imagebase + uintptr(symtab[i].Value)
 		}
 	}

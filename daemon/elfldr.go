@@ -21,17 +21,16 @@ var (
 )
 
 const (
-	_STACK_ALIGN        = 0x10
-	_PAGE_LENGTH        = 0x4000
-	_MMAP_TEXT_FLAGS    = syscall.MAP_FIXED | syscall.MAP_SHARED
-	_MMAP_DATA_FLAGS    = syscall.MAP_FIXED | syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE
-	_PAYLOAD_ARGS_SIZE  = int(0x30)
-	IPV6_2292PKTOPTIONS = 25
+	_STACK_ALIGN       = 0x10
+	_PAGE_LENGTH       = 0x4000
+	_MMAP_TEXT_FLAGS   = syscall.MAP_FIXED | syscall.MAP_SHARED
+	_MMAP_DATA_FLAGS   = syscall.MAP_FIXED | syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE
+	_PAYLOAD_ARGS_SIZE = int(0x30)
 )
 
 type ElfLoader struct {
 	data         []byte
-	tracer       Tracer
+	tracer       *Tracer
 	resolver     Resolver
 	textIndex    int
 	dynamicIndex int
@@ -44,13 +43,19 @@ type ElfLoader struct {
 	pid          int
 }
 
-func NewElfLoader(pid int, data []byte) ElfLoader {
+func NewElfLoader(pid int, tracer *Tracer, data []byte) (ElfLoader, error) {
+	var err error
+	if tracer == nil {
+		tracer, err = NewTracer(pid)
+	}
 	return ElfLoader{
 		data:         data,
+		tracer:       tracer,
+		resolver:     NewResolver(),
 		pid:          pid,
 		textIndex:    -1,
 		dynamicIndex: -1,
-	}
+	}, err
 }
 
 func (ldr *ElfLoader) toFileOffset(addr int) int {
@@ -627,7 +632,7 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 	err = ldr.tracer.Setsockopt(
 		int(files[0]),
 		syscall.IPPROTO_IPV6,
-		IPV6_2292PKTOPTIONS,
+		syscall.IPV6_2292PKTOPTIONS,
 		unsafe.Pointer(&buf[0]),
 		bufSize,
 	)

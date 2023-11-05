@@ -118,10 +118,10 @@ func NewTracer(pid int) (*Tracer, error) {
 
 	err := tracer.ptrace(PT_ATTACH, 0, 0)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return nil, err
 	}
-	status, err := tracer.wait(0)
+	status, err := tracer.Wait(0)
 	if !status.Stopped() {
 		return nil, UnexpectedProcessStatusError
 	}
@@ -146,11 +146,10 @@ func (tracer *Tracer) ptrace(request int, addr uintptr, data int) (err error) {
 }
 
 func waitpid(pid int, wstatus *syscall.WaitStatus, options int) (wpid int, err error) {
-	wpid, err = syscall.Wait4(pid, wstatus, options, nil)
-	return
+	return syscall.Wait4(pid, wstatus, options, nil)
 }
 
-func (tracer *Tracer) wait(options int) (syscall.WaitStatus, error) {
+func (tracer *Tracer) Wait(options int) (syscall.WaitStatus, error) {
 	var status syscall.WaitStatus
 	_, err := waitpid(tracer.pid, &status, options)
 	return status, err
@@ -167,12 +166,12 @@ func (tracer *Tracer) SetRegisters(regs *Reg) error {
 func (tracer *Tracer) Step() error {
 	err := tracer.ptrace(PT_STEP, 1, 0)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return err
 	}
-	status, err := tracer.wait(0)
+	status, err := tracer.Wait(0)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return err
 	}
 	if !status.Stopped() {
@@ -184,7 +183,7 @@ func (tracer *Tracer) Step() error {
 func (tracer *Tracer) Continue() error {
 	err := tracer.ptrace(PT_CONTINUE, 1, 0)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return err
 	}
 	return nil
@@ -193,16 +192,16 @@ func (tracer *Tracer) Continue() error {
 func (tracer *Tracer) Kill(wait bool) error {
 	err := tracer.ptrace(PT_KILL, 0, 0)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return err
 	}
 	if !wait {
 		return nil
 	}
 
-	state, err := tracer.wait(0)
+	state, err := tracer.Wait(0)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return err
 	}
 
@@ -248,7 +247,7 @@ func (tracer *Tracer) Call(addr uintptr, a, b, c, d, e, f uintptr) (int, error) 
 	var jmp Reg
 	err := tracer.GetRegisters(&jmp)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, err
 	}
 
@@ -278,7 +277,7 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 
 	err := tracer.SetRegisters(jmp)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, err
 	}
 
@@ -288,11 +287,11 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	// call the function
 	err = tracer.Continue()
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, err
 	}
 
-	state, err := tracer.wait(0)
+	state, err := tracer.Wait(0)
 
 	if !state.Stopped() {
 		return 0, errors.New("process not stopped")
@@ -304,14 +303,14 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 
 	err = tracer.GetRegisters(jmp)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, err
 	}
 
 	// restore registers
 	err = tracer.SetRegisters(backup)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, err
 	}
 
@@ -340,17 +339,17 @@ func (tracer *Tracer) startSyscall(backup *Reg, jmp *Reg) (int, error) {
 	err := tracer.SetRegisters(jmp)
 
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, errors.New("tracer.startSyscall set registers failed")
 	}
 
 	// execute the syscall instruction
 	err = tracer.Step()
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		err2 := tracer.SetRegisters(backup)
 		if err2 != nil {
-			log.Print(err2)
+			log.Println(err2)
 		}
 		return 0, errors.New("tracer.startSyscall Step failed")
 	}
@@ -358,14 +357,14 @@ func (tracer *Tracer) startSyscall(backup *Reg, jmp *Reg) (int, error) {
 	err = tracer.GetRegisters(jmp)
 
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, errors.New("tracer.startSyscall get registers failed")
 	}
 
 	// restore registers
 	err = tracer.SetRegisters(backup)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, errors.New("tracer.startSyscall set registers failed")
 	}
 
@@ -376,7 +375,7 @@ func (tracer *Tracer) Syscall(num int, a, b, c, d, e, f uintptr) (int, error) {
 	var jmp Reg
 	err := tracer.GetRegisters(&jmp)
 	if err != nil {
-		log.Print(err)
+		log.Println(err)
 		return 0, errors.New("tracer.Syscall get registers failed")
 	}
 
@@ -391,17 +390,17 @@ func (tracer *Tracer) Errno() error {
 	if tracer.errno_addr == 0 {
 		proc := GetProc(tracer.pid)
 		if proc == 0 {
-			log.Print("failed to get traced proc")
+			log.Println("failed to get traced proc")
 			return nil
 		}
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			log.Print("failed to get libkernel for traced proc")
+			log.Println("failed to get libkernel for traced proc")
 			return nil
 		}
 		addr := lib.GetAddress(_ERRNO_NID)
 		if addr == 0 {
-			log.Print("failed to get errno address for traced proc")
+			log.Println("failed to get errno address for traced proc")
 			return nil
 		}
 		tracer.errno_addr = addr

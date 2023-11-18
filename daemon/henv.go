@@ -104,8 +104,13 @@ func (hen *HenV) Wait() {
 }
 
 func (hen *HenV) Close() error {
-	log.Println("NO HOMEBREW FOR YOU!")
+	log.Println("NO MORE HOMEBREW FOR YOU!")
 	hen.cancel()
+	close(hen.payloadChannel)
+	close(hen.listenerChannel)
+	close(hen.prefixChannel)
+	close(hen.elfChannel)
+	close(hen.msgChannel)
 	return nil
 }
 
@@ -116,6 +121,7 @@ func (hen *HenV) Start(ctx context.Context) {
 	go hen.prefixHandler(ctx)
 	go hen.launchListenerHandler(ctx)
 	go hen.elfLoadHandler(ctx)
+	go startSyscoreIpc(hen, ctx)
 }
 
 func (hen *HenV) addPrefixHandler(handler AppLaunchPrefixHandler) error {

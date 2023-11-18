@@ -90,7 +90,8 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	}
 	defer ln.Close()
 
-	fp, err := os.Create(IPC_PATH)
+	const flags = syscall.O_WRONLY | syscall.O_CREAT | syscall.O_TRUNC
+	fp, err := os.OpenFile(IPC_PATH, flags, 0777)
 	if err != nil {
 		panic(err)
 	}

@@ -50,11 +50,6 @@ func KernelCopyin(kdest uintptr, p []byte) (n int, err error) {
 	return syscall.KernelCopyin(uintptr(kdest), p)
 }
 
-// the same rules for binary.Read apply to the data parameter
-func KernelCopyoutStruct(ksrc uintptr, data any) error {
-	return KernelMemoryReader{uintptr(ksrc)}.ReadStruct(data)
-}
-
 func KernelCopyoutUnsafe(ksrc uintptr, dst unsafe.Pointer, length int) (int, error) {
 	return KernelCopyout(ksrc, unsafe.Slice((*byte)(dst), length))
 }

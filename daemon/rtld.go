@@ -67,27 +67,31 @@ func (lib SharedLib) GetMetaData() SharedLibMetaData {
 func (lib SharedLib) GetAddress(nid Nid) uintptr {
 	meta := lib.GetMetaData()
 	if meta == 0 {
+		log.Println("failed to get metadata")
 		return 0
 	}
 	imagebase := lib.GetImageBase()
 	if imagebase == 0 {
+		log.Println("failed to get imagebase")
 		return 0
 	}
 	helper := meta.GetPltHelper()
 	if helper == nil {
+		log.Println("failed to get plt helper")
 		return 0
 	}
 	return getSymbolAddress(helper, imagebase, nid)
 }
 
 func (meta SharedLibMetaData) GetPltHelper() *RtldPltHelper {
-	res := &RtldPltHelper{}
-	err := KernelCopyoutStruct(uintptr(meta)+_METADATA_PLT_HELPER_OFFSET, res)
+	res := RtldPltHelper{}
+	const size = unsafe.Sizeof(res)
+	_, err := KernelCopyoutUnsafe(uintptr(meta)+_METADATA_PLT_HELPER_OFFSET, unsafe.Pointer(&res), int(size))
 	if err != nil {
 		log.Println(err)
 		return nil
 	}
-	return res
+	return &res
 }
 
 func getSymbolAddress(helper *RtldPltHelper, imagebase uintptr, nid Nid) uintptr {

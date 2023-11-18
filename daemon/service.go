@@ -16,6 +16,7 @@ var (
 )
 
 func init() {
+	println("service init reached")
 	err := libSceSystemService.Load()
 	if err != nil {
 		panic(err)

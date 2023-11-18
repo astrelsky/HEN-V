@@ -32,17 +32,18 @@ func GetAppInfo(pid int) (*AppInfo, error) {
 	const APP_INFO_SIZE = unsafe.Sizeof(AppInfo{})
 	mib := [MIB_LENGTH]int32{CTL_KERN, KERN_PROC, KERN_PROC_APPINFO, int32(pid)}
 	info := &AppInfo{}
+	var length uint64 = uint64(APP_INFO_SIZE)
 	res, _, err := syscall.Syscall6(
 		syscall.SYS___SYSCTL,
 		uintptr(unsafe.Pointer(&mib[0])),
 		MIB_LENGTH,
 		uintptr(unsafe.Pointer(info)),
-		APP_INFO_SIZE,
+		uintptr(unsafe.Pointer(&length)),
 		0,
 		0,
 	)
 	if res != 0 {
-		return nil, err
+		return info, fmt.Errorf("res: %v, err %s", int(res), err)
 	}
 	return info, nil
 }

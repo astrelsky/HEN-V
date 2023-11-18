@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"debug/elf"
 	"errors"
 	"fmt"
@@ -29,18 +28,12 @@ const (
 )
 
 type ElfLoader struct {
-	data         []byte
-	tracer       *Tracer
-	resolver     Resolver
-	textIndex    int
-	dynamicIndex int
-	reltab       []Elf64_Rela
-	plttab       []Elf64_Rela
-	symtab       []Elf64_Sym
-	strtab       *uint8
-	imagebase    uintptr
-	proc         KProc
-	pid          int
+	elf       Elf
+	tracer    *Tracer
+	resolver  Resolver
+	imagebase uintptr
+	proc      KProc
+	pid       int
 }
 
 func NewElfLoader(pid int, tracer *Tracer, data []byte) (ElfLoader, error) {
@@ -48,13 +41,12 @@ func NewElfLoader(pid int, tracer *Tracer, data []byte) (ElfLoader, error) {
 	if tracer == nil {
 		tracer, err = NewTracer(pid)
 	}
+	elf, err := NewElf(data)
 	return ElfLoader{
-		data:         data,
-		tracer:       tracer,
-		resolver:     NewResolver(),
-		pid:          pid,
-		textIndex:    -1,
-		dynamicIndex: -1,
+		elf:      elf,
+		tracer:   tracer,
+		resolver: NewResolver(),
+		pid:      pid,
 	}, err
 }
 
@@ -67,8 +59,7 @@ func (ldr *ElfLoader) toFileOffset(addr int) int {
 }
 
 func (ldr *ElfLoader) faddr(addr int) unsafe.Pointer {
-	addr = ldr.toFileOffset(addr)
-	return unsafe.Pointer(&ldr.data[addr])
+	return ldr.elf.faddr(addr)
 }
 
 func (ldr *ElfLoader) getProc() KProc {
@@ -79,82 +70,8 @@ func (ldr *ElfLoader) getProc() KProc {
 	return ldr.proc
 }
 
-func (ldr *ElfLoader) getDataAt(offset int) unsafe.Pointer {
-	return unsafe.Add(unsafe.Pointer(&ldr.data[0]), offset)
-}
-
-func (ldr *ElfLoader) getElfHeader() *Elf64_Ehdr {
-	return (*Elf64_Ehdr)(ldr.getDataAt(0))
-}
-
-func (ldr *ElfLoader) getProgramHeaders() []Elf64_Phdr {
-	elf := ldr.getElfHeader()
-	return unsafe.Slice((*Elf64_Phdr)(ldr.getDataAt(int(elf.Phoff))), elf.Phnum)
-}
-
-func (ldr *ElfLoader) getDynamicTable() (*Elf64_Dyn, error) {
-	phdrs := ldr.getProgramHeaders()
-	if ldr.dynamicIndex == 0 {
-		return (*Elf64_Dyn)(ldr.getDataAt(int(phdrs[ldr.dynamicIndex].Offset))), nil
-	}
-
-	for i := range phdrs {
-		if phdrs[i].Type() == elf.PT_DYNAMIC {
-			ldr.dynamicIndex = i
-			return (*Elf64_Dyn)(ldr.getDataAt(int(phdrs[ldr.dynamicIndex].Offset))), nil
-		}
-	}
-
-	return nil, ErrNoDynamicTable
-}
-
-func (ldr *ElfLoader) processDynamicTable() error {
-	dyn, err := ldr.getDynamicTable()
-	if err != nil {
-		return err
-	}
-
-	var symtabOffset int
-	var reltabSize int
-	var plttabSize int
-	var reltab unsafe.Pointer
-	var plttab unsafe.Pointer
-	for ; dyn.Tag() != elf.DT_NULL; dyn = dyn.Next() {
-		switch dyn.Tag() {
-		case elf.DT_RELA:
-			reltab = ldr.faddr(dyn.Value())
-		case elf.DT_RELASZ:
-			const size = int(unsafe.Sizeof(Elf64_Rela{}))
-			reltabSize = dyn.Value() / size
-		case elf.DT_JMPREL:
-			plttab = ldr.faddr(dyn.Value())
-		case elf.DT_PLTRELSZ:
-			const size = int(unsafe.Sizeof(Elf64_Rela{}))
-			plttabSize = dyn.Value() / size
-		case elf.DT_SYMTAB:
-			symtabOffset = dyn.Value()
-		case elf.DT_STRTAB:
-			ldr.strtab = (*byte)(ldr.faddr(dyn.Value()))
-		default:
-		}
-	}
-
-	if symtabOffset != 0 {
-		// just fake a symtab size to make a slice
-		symtab := ldr.faddr(symtabOffset)
-		symtabsize := (len(ldr.data) - symtabOffset) / int(unsafe.Sizeof(Elf64_Sym{}))
-		ldr.symtab = unsafe.Slice((*Elf64_Sym)(symtab), symtabsize)
-	}
-
-	if reltab != nil {
-		ldr.reltab = unsafe.Slice((*Elf64_Rela)(reltab), reltabSize)
-	}
-
-	if plttab != nil {
-		ldr.plttab = unsafe.Slice((*Elf64_Rela)(plttab), plttabSize)
-	}
-
-	return nil
+func (ldr *ElfLoader) getDynamicTable() *Elf64_Dyn {
+	return ldr.elf.dyntab
 }
 
 func sizeAlign(size uint, alignment uint) uint {
@@ -166,23 +83,7 @@ func pageAlign(length uint) uint {
 }
 
 func (ldr *ElfLoader) getTextHeader() *Elf64_Phdr {
-	phdrs := ldr.getProgramHeaders()
-	if ldr.textIndex != -1 {
-		return &phdrs[ldr.textIndex]
-	}
-
-	ehdr := ldr.getElfHeader()
-	for i := range phdrs {
-		if (phdrs[i].Flags() & elf.PF_X) != 0 {
-			if phdrs[i].Paddr <= ehdr.Entry && (phdrs[i].Paddr+Elf64_Addr(phdrs[i].Filesz)) < ehdr.Entry {
-				ldr.textIndex = i
-				return &phdrs[ldr.textIndex]
-			}
-		}
-	}
-
-	log.Println("text section not found")
-	return nil
+	return ldr.elf.getTextHeader()
 }
 
 func (ldr *ElfLoader) getTextSize() uint {
@@ -199,7 +100,7 @@ func isLoadable(phdr *Elf64_Phdr) bool {
 }
 
 func (ldr *ElfLoader) getTotalLoadSize() (size uint) {
-	phdrs := ldr.getProgramHeaders()
+	phdrs := ldr.elf.phdrs
 	for i := range phdrs {
 		if isLoadable(&phdrs[i]) {
 			if phdrs[i].Align != _PAGE_LENGTH {
@@ -288,7 +189,7 @@ func (ldr *ElfLoader) mapElfMemory() error {
 		return err
 	}
 
-	phdrs := ldr.getProgramHeaders()
+	phdrs := ldr.elf.phdrs
 
 	for i := range phdrs {
 		addr := ldr.toVirtualAddress(uintptr(phdrs[i].Paddr))
@@ -296,7 +197,7 @@ func (ldr *ElfLoader) mapElfMemory() error {
 		prot := toMmapProt(&phdrs[i])
 		var fd int
 		var flags uint32
-		if i == ldr.textIndex {
+		if i == ldr.elf.textIndex {
 			fd = jit
 			flags = _MMAP_TEXT_FLAGS
 		} else {
@@ -350,12 +251,7 @@ func (ldr *ElfLoader) loadLibSysmodule() error {
 }
 
 func (ldr *ElfLoader) getString(i int) string {
-	index := bytes.IndexByte(ldr.data[i:], 0)
-	if index == -1 {
-		log.Printf("missing null terminator at %#08x\n", i)
-		return ""
-	}
-	return string(ldr.data[i : i+index])
+	return ldr.elf.getString(i)
 }
 
 func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib string) (int, error) {
@@ -427,11 +323,7 @@ func (ldr *ElfLoader) loadLibraries() error {
 
 	defer ldr.tracer.Munmap(uintptr(mem), _PAGE_LENGTH)
 
-	dyn, err := ldr.getDynamicTable()
-	if err != nil {
-		log.Println(err)
-		return err
-	}
+	dyn := ldr.elf.dyntab
 
 	for ; dyn.Tag() != elf.DT_NULL; dyn = dyn.Next() {
 		if dyn.Tag() != elf.DT_NEEDED {
@@ -473,7 +365,7 @@ func (ldr *ElfLoader) loadLibraries() error {
 }
 
 func (ldr *ElfLoader) getSymbolAddress(rel *Elf64_Rela) (uintptr, error) {
-	name := ldr.getString(int(ldr.symtab[rel.Symbol()].Name))
+	name := ldr.getString(int(ldr.elf.symtab[rel.Symbol()].Name))
 	libsym := ldr.resolver.LookupSymbol(name)
 	if libsym == 0 {
 		return 0, fmt.Errorf("failed to find library symbol %s", name)
@@ -482,14 +374,14 @@ func (ldr *ElfLoader) getSymbolAddress(rel *Elf64_Rela) (uintptr, error) {
 }
 
 func (ldr *ElfLoader) processPltRelocations() error {
-	if ldr.plttab == nil {
+	if ldr.elf.plttab == nil {
 		return nil
 	}
 
-	for i := range ldr.plttab {
-		plt := &ldr.plttab[i]
+	for i := range ldr.elf.plttab {
+		plt := &ldr.elf.plttab[i]
 		if plt.Type() != elf.R_X86_64_JMP_SLOT {
-			sym := &ldr.symtab[plt.Symbol()]
+			sym := &ldr.elf.symtab[plt.Symbol()]
 			name := ldr.getString(int(sym.Name))
 			return fmt.Errorf("unexpected relocation type %s for symbol %s\n", plt.Type().String(), name)
 		}
@@ -506,12 +398,12 @@ func (ldr *ElfLoader) processPltRelocations() error {
 }
 
 func (ldr *ElfLoader) processRelaRelocations() error {
-	if ldr.reltab == nil {
+	if ldr.elf.reltab == nil {
 		return nil
 	}
 
-	for i := range ldr.reltab {
-		rel := &ldr.reltab[i]
+	for i := range ldr.elf.reltab {
+		rel := &ldr.elf.reltab[i]
 		switch rel.Type() {
 		case elf.R_X86_64_64:
 			// symbol + addend
@@ -543,7 +435,7 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 			}
 			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym
 		default:
-			sym := &ldr.symtab[rel.Symbol()]
+			sym := &ldr.elf.symtab[rel.Symbol()]
 			name := ldr.getString(int(sym.Name))
 			return fmt.Errorf("unexpected relocation type %s for symbol %s\n", rel.Type().String(), name)
 
@@ -712,12 +604,12 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 }
 
 func (ldr *ElfLoader) load() error {
-	phdrs := ldr.getProgramHeaders()
+	phdrs := ldr.elf.phdrs
 	for i := range phdrs {
 		phdr := &phdrs[i]
 		if isLoadable(phdr) {
 			vaddr := ldr.toVirtualAddress(uintptr(phdr.Paddr))
-			_, err := UserlandCopyin(ldr.pid, vaddr, ldr.data[phdr.Offset:phdr.Filesz])
+			_, err := UserlandCopyin(ldr.pid, vaddr, ldr.elf.data[phdr.Offset:phdr.Filesz])
 			if err != nil {
 				log.Println(err)
 				return err
@@ -746,7 +638,7 @@ func (ldr *ElfLoader) start(args uintptr) error {
 
 	correctRsp(&regs)
 	regs.Rdi = int64(args)
-	entry := uintptr(ldr.getElfHeader().Entry)
+	entry := uintptr(ldr.elf.ehdr.Entry)
 	regs.Rip = int64(ldr.toVirtualAddress(entry))
 	err = ldr.tracer.SetRegisters(&regs)
 	if err != nil {
@@ -760,15 +652,8 @@ func (ldr *ElfLoader) start(args uintptr) error {
 }
 
 func (ldr *ElfLoader) Run() error {
-	log.Println("processing dynamic table")
-	err := ldr.processDynamicTable()
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
 	log.Println("mapping elf memory")
-	err = ldr.mapElfMemory()
+	err := ldr.mapElfMemory()
 	if err != nil {
 		log.Println(err)
 		return err

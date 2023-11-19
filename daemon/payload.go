@@ -30,7 +30,9 @@ type LocalProcess struct {
 func SystemServiceAddLocalProcess(pidChannel <-chan int32, num int) (LocalProcess, error) {
 	path := []byte(fmt.Sprintf("/app0/payload%d.bin\x00", num))
 	param := &LocalProcessArgs{a: 1, b: -1}
+	log.Println("calling socket pair")
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	log.Println("socket pair returned")
 	if err != nil {
 		log.Println(err)
 		return LocalProcess{}, err
@@ -51,6 +53,7 @@ func SystemServiceAddLocalProcess(pidChannel <-chan int32, num int) (LocalProces
 	param.fds[0] = int32(fds[0])
 	param.fds[1] = int32(fds[1])
 
+	log.Println("getting app status")
 	status, err := SystemServiceGetAppStatus()
 	if err != nil {
 		log.Println(err)
@@ -58,21 +61,29 @@ func SystemServiceAddLocalProcess(pidChannel <-chan int32, num int) (LocalProces
 		return LocalProcess{}, err
 	}
 
+	log.Println("got app status")
+
 	argv := []uintptr{0}
 
+	log.Println("calling sceSystemServiceAddLocalProcess")
 	res, _, _ := sceSystemServiceAddLocalProcess.Call(
 		uintptr(status.id),
 		uintptr(unsafe.Pointer(&path[0])),
 		uintptr(unsafe.Pointer(&argv[0])),
 		uintptr(unsafe.Pointer(param)),
 	)
+	log.Println("sceSystemServiceAddLocalProcess returned")
 	if int(res) < 0 {
 		err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %v", int(res))
 		cleanup()
 		return LocalProcess{}, err
 	}
 
+	log.Println("waiting for pid to come over the channel")
+
 	info.pid = <-pidChannel
+
+	log.Printf("Received pid %v\n", info.pid)
 
 	return info, nil
 }
@@ -145,6 +156,7 @@ func (hen *HenV) handlePayload(conn net.Conn, ldr chan<- ElfLoadInfo) error {
 func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 	defer hen.wg.Done()
 	for info := range payloads {
+		log.Printf("received payload pid %v\n", info.pid)
 		err := loadElf(info)
 		if err != nil {
 			log.Println(err)
@@ -154,6 +166,7 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 
 func (hen *HenV) runPayloadServer(ctx context.Context) {
 	defer hen.wg.Done()
+	log.Println("payload server started")
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ldr := make(chan ElfLoadInfo, 4)
@@ -177,6 +190,7 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 				log.Println(err)
 				continue
 			}
+			log.Println("payload connection accepted")
 			err = hen.handlePayload(conn, ldr)
 			if err != nil {
 				log.Println(err)

@@ -41,7 +41,10 @@ type dbgArg3 struct {
 //go:uintptrescapes
 func _mdbg_call(arg1 uintptr, arg2 uintptr, arg3 uintptr) (err error) {
 	callback := func() {
-		_, _, err = syscall.Syscall(syscall.SYS_MDBG_CALL, arg1, arg2, arg3)
+		_, _, errno := syscall.Syscall(syscall.SYS_MDBG_CALL, arg1, arg2, arg3)
+		if errno != 0 {
+			err = errno
+		}
 	}
 	RunWithCurrentAuthId(DEBUGGER_AUTHID, callback)
 	return
@@ -95,7 +98,7 @@ func UserlandCopyinUnsafe(pid int, dst uintptr, src unsafe.Pointer, length int) 
 }
 
 func UserlandCopyin(pid int, dst uintptr, src []byte) (n int, err error) {
-	return UserlandCopyoutUnsafe(pid, dst, unsafe.Pointer(&src[0]), len(src))
+	return UserlandCopyinUnsafe(pid, dst, unsafe.Pointer(&src[0]), len(src))
 }
 
 func UserlandCopyoutUnsafe(pid int, src uintptr, dst unsafe.Pointer, length int) (n int, err error) {

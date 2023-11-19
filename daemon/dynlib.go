@@ -46,7 +46,10 @@ func (info *DynlibModuleInfo) Name() string {
 //go:uintptrescapes
 func _sysDlGetList(pid int, handles uintptr, maxHandles uint, numHandles uintptr) (err error) {
 	callback := func() {
-		_, _, err = syscall.Syscall6(syscall.SYS_DL_GET_LIST, uintptr(pid), handles, uintptr(maxHandles), numHandles, 0, 0)
+		_, _, errno := syscall.Syscall6(syscall.SYS_DL_GET_LIST, uintptr(pid), handles, uintptr(maxHandles), numHandles, 0, 0)
+		if errno != 0 {
+			err = errno
+		}
 	}
 	RunWithCurrentAuthId(DEBUGGER_AUTHID, callback)
 	return
@@ -68,7 +71,10 @@ func GetModuleHandles(pid int) []int {
 //go:uintptrescapes
 func _sysDlGetInfo2(pid int, sandboxedPath uint, handle int, info uintptr) (err error) {
 	callback := func() {
-		_, _, err = syscall.Syscall6(syscall.SYS_DL_GET_INFO_2, uintptr(pid), uintptr(sandboxedPath), uintptr(handle), info, 0, 0)
+		_, _, errno := syscall.Syscall6(syscall.SYS_DL_GET_INFO_2, uintptr(pid), uintptr(sandboxedPath), uintptr(handle), info, 0, 0)
+		if errno != 0 {
+			err = errno
+		}
 	}
 	RunWithCurrentAuthId(DEBUGGER_AUTHID, callback)
 	return

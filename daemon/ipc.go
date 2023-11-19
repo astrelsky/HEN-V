@@ -36,9 +36,11 @@ const (
 )
 
 type IpcResult struct {
-	cmd int32
-	pid int32
-	fun uintptr
+	cmd    int32
+	pid    int32
+	fun    uintptr
+	prefix uint32
+	_      uint32
 }
 
 type LoopBuilder struct {
@@ -75,6 +77,8 @@ func handleSyscoreIpc(hen *HenV, ctx context.Context, packets <-chan any) {
 
 func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	defer hen.wg.Done()
+
+	log.Println("syscore ipc started")
 
 	if fileExists(IPC_PATH) {
 		panic(fmt.Errorf("homebrew ipc unix socket %s already exists", IPC_PATH))
@@ -170,8 +174,16 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 		tracer, err := NewTracer(int(cmd.pid))
 		if err != nil {
 			log.Println(err)
+			// we need to kill the process or else it'll be stuck in an infinite loop
+			err = syscall.Kill(int(cmd.pid), syscall.SIGKILL)
+			if err != nil {
+				log.Println(err)
+			}
+
 			continue
 		}
+
+		log.Println("tracer attached, sending info over channel")
 
 		hen.homebrewChannel <- HomebrewLaunchInfo{tracer: tracer, fun: cmd.fun}
 	}
@@ -199,6 +211,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 			tracer.Kill(false)
 		}
 	}()
+	log.Println("getting registers")
 	var regs Reg
 	err = tracer.GetRegisters(&regs)
 	if err != nil {
@@ -208,11 +221,15 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 
 	regs.Rip = int64(fun)
 
+	log.Println("setting registers")
+
 	err = tracer.SetRegisters(&regs)
 	if err != nil {
 		log.Println(err)
 		return
 	}
+
+	log.Println("running until execve completion")
 
 	// run until execve completion
 	err = tracer.Continue()
@@ -221,21 +238,31 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
+	log.Println("waiting")
+
 	status, err := tracer.Wait(0)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
+	log.Println("finished waiting")
+
 	if !status.Stopped() {
 		err = ErrProcessNotStopped
+		log.Println(err)
 		return
 	}
 
+	log.Println("checking signal")
+
 	if status.StopSignal() != syscall.SIGTRAP {
 		err = getUnexpectedSignalError(status.StopSignal())
+		log.Println(err)
 		return
 	}
+
+	log.Println("getting kernel proc")
 
 	var proc KProc
 	for {
@@ -243,6 +270,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		if proc == 0 {
 			if !isProcessAlive(tracer.pid) {
 				err = ErrProcessDied
+				log.Println(err)
 				return
 			}
 		} else {
@@ -252,74 +280,112 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 
 	loop := NewLoopBuilder()
 
+	log.Println("getting libkernel handle")
+
 	lib := proc.GetLib(LIBKERNEL_HANDLE)
 	if lib == 0 {
 		err = ErrNoLibKernel
+		log.Println(err)
 		return
 	}
+
+	log.Println("getting usleep address")
 
 	usleep := lib.GetAddress(USLEEP_NID)
 	if usleep == 0 {
 		err = ErrNoUsleep
+		log.Println(err)
 		return
 	}
 
 	loop.setUsleepAddress(usleep)
 
+	log.Println("getting eboot")
+
 	eboot := proc.GetEboot()
 	if eboot == 0 {
 		err = ErrNoEboot
+		log.Println(err)
 		return
 	}
+
+	log.Println("getting imagebase")
 
 	base := eboot.GetImageBase()
 
-	_, err = UserlandCopyin(tracer.pid, base+ENTRYPOINT_OFFSET, loop.data[:])
+	log.Println("patching entrypoint")
+
+	n, err := UserlandCopyin(tracer.pid, base+ENTRYPOINT_OFFSET, loop.data[:])
 	if err != nil {
 		err = errors.Join(ErrCopyLoop, err)
+		log.Println(err)
 		return
 	}
+	log.Printf("wrote %v bytes at %#08x in pid %v\n", n, base+ENTRYPOINT_OFFSET, tracer.pid)
+
+	log.Println("continuing...")
 
 	err = tracer.Continue()
 	if err != nil {
+		log.Println(err)
 		return
 	}
+
+	log.Println("waiting...")
 
 	status, err = tracer.Wait(0)
 	if err != nil {
+		log.Println(err)
 		return
 	}
+
+	log.Println("done waiting")
 
 	if !status.Stopped() {
 		err = ErrProcessNotStopped
+		log.Println(err)
 		return
 	}
+
+	log.Println("checking signal")
 
 	if status.StopSignal() != syscall.SIGTRAP {
 		err = getUnexpectedSignalError(status.StopSignal())
+		log.Println(err)
 		return
 	}
 
+	log.Println("getting registers")
+
 	err = tracer.GetRegisters(&regs)
 	if err != nil {
+		log.Println(err)
 		return
 	}
 
 	if regs.Rip != int64(base)+ENTRYPOINT_OFFSET+1 {
 		err = ErrUnexpectedRip
+		log.Println(err)
 		return
 	}
+
+	log.Println("getting app info")
 
 	// success
 
 	info, err := GetAppInfo(tracer.pid)
 	if err != nil {
+		log.Println(err)
 		return
 	}
 
+	log.Println("getting titleid")
+
 	titleid := info.TitleId()
+	log.Printf("titleid: %s\n", titleid)
 	if titleid == HenVTitleId {
 		// payload
+		log.Println("sending payload pid")
 		hen.payloadChannel <- int32(tracer.pid)
 		return
 	}
@@ -330,6 +396,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		fp, err1 := os.Open("/system_ex/app/" + titleid + "/homebrew.elf")
 		if err1 != nil {
 			err = err1
+			log.Println(err)
 			return
 		}
 		// we load it

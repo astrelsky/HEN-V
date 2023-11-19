@@ -122,7 +122,7 @@ func NewTracer(pid int) (*Tracer, error) {
 		return nil, err
 	}
 	status, err := tracer.Wait(0)
-	if !status.Stopped() {
+	if !status.Continued() { // doesn't make sense but whatever
 		return nil, UnexpectedProcessStatusError
 	}
 	return tracer, nil
@@ -139,7 +139,10 @@ func (tracer *Tracer) Detach() error {
 
 func (tracer *Tracer) ptrace(request int, addr uintptr, data int) (err error) {
 	callback := func() {
-		_, _, err = syscall.Syscall6(syscall.SYS_PTRACE, uintptr(request), uintptr(tracer.pid), uintptr(addr), uintptr(data), 0, 0)
+		_, _, e1 := syscall.Syscall6(syscall.SYS_PTRACE, uintptr(request), uintptr(tracer.pid), uintptr(addr), uintptr(data), 0, 0)
+		if e1 != 0 {
+			err = e1
+		}
 	}
 	GetCurrentUcred().RunWithAuthId(PTRACE_ID, callback)
 	return
@@ -175,7 +178,8 @@ func (tracer *Tracer) Step() error {
 		return err
 	}
 	if !status.Stopped() {
-		return UnexpectedProcessStatusError
+		return fmt.Errorf("unexpected process status %#08x", status)
+		//return UnexpectedProcessStatusError
 	}
 	return nil
 }
@@ -206,7 +210,8 @@ func (tracer *Tracer) Kill(wait bool) error {
 	}
 
 	if !state.Exited() {
-		return UnexpectedProcessStatusError
+		return fmt.Errorf("unexpected process status %#08x", state)
+		//return UnexpectedProcessStatusError
 	}
 	return nil
 }

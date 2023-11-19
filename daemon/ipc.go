@@ -71,11 +71,11 @@ func fileExists(path string) bool {
 
 func handleSyscoreIpc(hen *HenV, ctx context.Context, packets <-chan any) {
 	defer os.Remove(IPC_PATH)
-
 }
 
 func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	defer hen.wg.Done()
+
 	if fileExists(IPC_PATH) {
 		panic(fmt.Errorf("homebrew ipc unix socket %s already exists", IPC_PATH))
 	}
@@ -90,14 +90,7 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	}
 	defer ln.Close()
 
-	const flags = syscall.O_WRONLY | syscall.O_CREAT | syscall.O_TRUNC
-	fp, err := os.OpenFile(IPC_PATH, flags, 0777)
-	if err != nil {
-		panic(err)
-	}
-
-	fp.Close()
-	defer os.Remove(IPC_PATH)
+	ln.(*net.UnixListener).SetUnlinkOnClose(true)
 
 	conn, err := ln.Accept()
 	if err != nil {

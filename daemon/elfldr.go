@@ -4,7 +4,9 @@ import (
 	"debug/elf"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -34,9 +36,15 @@ type ElfLoader struct {
 	imagebase uintptr
 	proc      KProc
 	pid       int
+	payload   bool
 }
 
-func NewElfLoader(pid int, tracer *Tracer, data []byte) (ElfLoader, error) {
+type elfReadResult struct {
+	buf []byte
+	err error
+}
+
+func NewElfLoader(pid int, tracer *Tracer, data []byte, payload bool) (ElfLoader, error) {
 	var err error
 	if tracer == nil {
 		tracer, err = NewTracer(pid)
@@ -47,18 +55,23 @@ func NewElfLoader(pid int, tracer *Tracer, data []byte) (ElfLoader, error) {
 		tracer:   tracer,
 		resolver: NewResolver(),
 		pid:      pid,
+		payload:  payload,
 	}, err
 }
 
-func (ldr *ElfLoader) toFileOffset(addr int) int {
-	text := ldr.getTextHeader()
-	if Elf64_Addr(addr) >= text.Vaddr {
-		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset))
+func (ldr *ElfLoader) toFileOffset(addr int) (int, error) {
+	text, err := ldr.getTextHeader()
+	if err != nil {
+		log.Println(err)
+		return 0, err
 	}
-	return addr
+	if Elf64_Addr(addr) >= text.Vaddr {
+		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset)), nil
+	}
+	return addr, nil
 }
 
-func (ldr *ElfLoader) faddr(addr int) unsafe.Pointer {
+func (ldr *ElfLoader) faddr(addr int) (unsafe.Pointer, error) {
 	return ldr.elf.faddr(addr)
 }
 
@@ -82,16 +95,17 @@ func pageAlign(length uint) uint {
 	return sizeAlign(length, _PAGE_LENGTH)
 }
 
-func (ldr *ElfLoader) getTextHeader() *Elf64_Phdr {
+func (ldr *ElfLoader) getTextHeader() (*Elf64_Phdr, error) {
 	return ldr.elf.getTextHeader()
 }
 
-func (ldr *ElfLoader) getTextSize() uint {
-	text := ldr.getTextHeader()
-	if text == nil {
-		return 0
+func (ldr *ElfLoader) getTextSize() (uint, error) {
+	text, err := ldr.getTextHeader()
+	if err != nil {
+		log.Println(err)
+		return 0, err
 	}
-	return pageAlign(uint(text.Memsz))
+	return pageAlign(uint(text.Memsz)), nil
 }
 
 func isLoadable(phdr *Elf64_Phdr) bool {
@@ -112,27 +126,34 @@ func (ldr *ElfLoader) getTotalLoadSize() (size uint) {
 	return size
 }
 
-func (ldr *ElfLoader) toVirtualAddress(addr uintptr) uintptr {
-	text := ldr.getTextHeader()
-	if text == nil {
-		return 0
+func (ldr *ElfLoader) toVirtualAddress(addr uintptr) (uintptr, error) {
+	text, err := ldr.getTextHeader()
+	if err != nil {
+		log.Println(err)
+		return 0, err
 	}
 	if addr >= uintptr(text.Vaddr) {
 		addr -= uintptr(text.Vaddr) + uintptr(text.Offset)
 	}
-	return ldr.imagebase + addr
+	return ldr.imagebase + addr, nil
 }
 
-func toMmapProt(phdr *Elf64_Phdr) (res uint32) {
+func toMmapProt(phdr *Elf64_Phdr, payload bool) (res uint32) {
 	flags := phdr.Flags()
 	if (flags & elf.PF_X) != 0 {
 		res |= syscall.PROT_EXEC
 	}
 	if (flags & elf.PF_R) != 0 {
-		res |= syscall.PROT_READ | syscall.PROT_GPU_READ
+		res |= syscall.PROT_READ
+		if !payload {
+			res |= syscall.PROT_GPU_READ
+		}
 	}
 	if (flags & elf.PF_W) != 0 {
-		res |= syscall.PROT_WRITE | syscall.PROT_GPU_WRITE
+		res |= syscall.PROT_WRITE
+		if !payload {
+			res |= syscall.PROT_GPU_WRITE
+		}
 	}
 	return
 }
@@ -141,7 +162,12 @@ func (ldr *ElfLoader) mapElfMemory() error {
 	// we don't need to worry about cleaning up the target process memory on failure
 	// because the process will be killed anyway
 
-	textSize := ldr.getTextSize()
+	textSize, err := ldr.getTextSize()
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
 	totalSize := ldr.getTotalLoadSize()
 
 	mem, err := ldr.tracer.Mmap(0, uint64(totalSize), syscall.PROT_READ, syscall.MAP_ANONYMOUS|syscall.MAP_PRIVATE, -1, 0)
@@ -192,9 +218,18 @@ func (ldr *ElfLoader) mapElfMemory() error {
 	phdrs := ldr.elf.phdrs
 
 	for i := range phdrs {
-		addr := ldr.toVirtualAddress(uintptr(phdrs[i].Paddr))
+		phdr := &phdrs[i]
+		if !phdr.Loadable() {
+			continue
+		}
+		addr, err := ldr.toVirtualAddress(uintptr(phdrs[i].Paddr))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
 		size := pageAlign(uint(phdrs[i].Memsz))
-		prot := toMmapProt(&phdrs[i])
+		prot := toMmapProt(&phdrs[i], ldr.payload)
 		var fd int
 		var flags uint32
 		if i == ldr.elf.textIndex {
@@ -219,7 +254,7 @@ func (ldr *ElfLoader) mapElfMemory() error {
 		}
 
 		if uintptr(res) != addr {
-			return fmt.Errorf("tracer_mmap did not give the requested address requested %#08x received 0x#%08x", addr, res)
+			return fmt.Errorf("Tracer.Mmap did not give the requested address requested %#08x received %#08x", addr, res)
 		}
 	}
 
@@ -318,7 +353,7 @@ func (ldr *ElfLoader) loadLibraries() error {
 	}
 
 	if mem == -1 {
-		return errors.New("load_libraries tracer_mmap")
+		return errors.New("load_libraries Tracer.Mmap")
 	}
 
 	defer ldr.tracer.Munmap(uintptr(mem), _PAGE_LENGTH)
@@ -391,7 +426,12 @@ func (ldr *ElfLoader) processPltRelocations() error {
 			log.Println(err)
 			return err
 		}
-		*(*uintptr)(ldr.faddr(int(plt.r_offset))) = libsym
+		symaddr, err := ldr.faddr(int(plt.r_offset))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		*(*uintptr)(symaddr) = libsym
 	}
 
 	return nil
@@ -412,7 +452,12 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym + uintptr(rel.r_addend)
+			symaddr, err := ldr.faddr(int(rel.r_offset))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			*(*uintptr)(symaddr) = libsym + uintptr(rel.r_addend)
 
 		case elf.R_X86_64_GLOB_DAT:
 			// symbol
@@ -421,10 +466,20 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym
+			symaddr, err := ldr.faddr(int(rel.r_offset))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			*(*uintptr)(symaddr) = libsym
 		case elf.R_X86_64_RELATIVE:
 			// imagebase + addend
-			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = ldr.imagebase + uintptr(rel.r_addend)
+			symaddr, err := ldr.faddr(int(rel.r_offset))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			*(*uintptr)(symaddr) = ldr.imagebase + uintptr(rel.r_addend)
 
 		case elf.R_X86_64_JMP_SLOT:
 			// edge case where the dynamic relocation sections are merged
@@ -433,7 +488,12 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*(*uintptr)(ldr.faddr(int(rel.r_offset))) = libsym
+			symaddr, err := ldr.faddr(int(rel.r_offset))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			*(*uintptr)(symaddr) = libsym
 		default:
 			sym := &ldr.elf.symtab[rel.Symbol()]
 			name := ldr.getString(int(sym.Name))
@@ -608,8 +668,12 @@ func (ldr *ElfLoader) load() error {
 	for i := range phdrs {
 		phdr := &phdrs[i]
 		if isLoadable(phdr) {
-			vaddr := ldr.toVirtualAddress(uintptr(phdr.Paddr))
-			_, err := UserlandCopyin(ldr.pid, vaddr, ldr.elf.data[phdr.Offset:phdr.Filesz])
+			vaddr, err := ldr.toVirtualAddress(uintptr(phdr.Paddr))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			_, err = UserlandCopyin(ldr.pid, vaddr, ldr.elf.data[phdr.Offset:phdr.Filesz])
 			if err != nil {
 				log.Println(err)
 				return err
@@ -639,7 +703,12 @@ func (ldr *ElfLoader) start(args uintptr) error {
 	correctRsp(&regs)
 	regs.Rdi = int64(args)
 	entry := uintptr(ldr.elf.ehdr.Entry)
-	regs.Rip = int64(ldr.toVirtualAddress(entry))
+	rip, err := ldr.toVirtualAddress(entry)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	regs.Rip = int64(rip)
 	err = ldr.tracer.SetRegisters(&regs)
 	if err != nil {
 		log.Println(err)
@@ -696,4 +765,218 @@ func (ldr *ElfLoader) Run() error {
 
 	log.Println("starting")
 	return ldr.start(args)
+}
+
+func (info *ElfLoadInfo) Close() (err error) {
+	if info.reader != nil {
+		err = info.reader.Close()
+		info.reader = nil
+	}
+	if info.tracer != nil {
+		err = errors.Join(err, info.tracer.Detach())
+		info.tracer = nil
+	}
+	return
+}
+
+func readElfData(r io.ReadCloser, res chan elfReadResult) {
+	defer r.Close()
+
+	log.Println("reading elf")
+
+	var result elfReadResult
+
+	defer func() {
+		res <- result
+		close(res)
+	}()
+
+	_, ok := r.(*os.File)
+	if ok {
+		data, err := io.ReadAll(r)
+		result.buf = data
+		result.err = err
+		return
+	}
+
+	buf := ByteBuilder{}
+
+	log.Println("reading elf header")
+
+	buf.Grow(int(ELF_HEADER_SIZE))
+
+	// TODO read elf
+	// need to do this the hard way because people are stupid and may not close the
+	// connection after sending all the data
+	n, err := buf.ReadFrom(r)
+	if n != int64(ELF_HEADER_SIZE) {
+		if err == nil {
+			err = fmt.Errorf("only read %v out of %v bytes", n, ELF_HEADER_SIZE)
+		}
+		log.Println(err)
+		result.err = err
+		return
+	}
+
+	log.Println("read elf header")
+
+	log.Println("checking elf header")
+
+	result.err = checkElf(buf.Bytes())
+	if result.err != nil {
+		log.Println(result.err)
+		return
+	}
+
+	log.Println("elf header ok")
+
+	ehdr := *(*Elf64_Ehdr)(unsafe.Pointer(&(buf.Bytes()[0])))
+	if ehdr.Phoff > Elf64_Off(ELF_HEADER_SIZE) {
+		m := int(ehdr.Phoff - Elf64_Off(ELF_HEADER_SIZE))
+		n, err = buf.ReadFrom(r)
+		if n != int64(m) {
+			if err == nil {
+				err = fmt.Errorf("only read %v out of %v bytes", n, m)
+			}
+			log.Println(err)
+			result.err = err
+			return
+		}
+	}
+
+	log.Println("reading program headers")
+
+	m := int(ELF_PROGRAM_HEADER_SIZE * uintptr(ehdr.Phnum))
+	buf.Grow(int(m))
+	n, err = buf.ReadFrom(r)
+	if n != int64(m) {
+		if err == nil {
+			err = fmt.Errorf("only read %v out of %v bytes", n, m)
+		}
+		log.Println(err)
+		result.err = err
+		return
+	}
+
+	log.Println("read program headers")
+
+	phdrs := unsafe.Slice((*Elf64_Phdr)(unsafe.Pointer(&(buf.Bytes()[ehdr.Phoff]))), ehdr.Phnum)
+	var end uint
+	for i := range phdrs {
+		phdr := &phdrs[i]
+		phdrEnd := uint(phdr.Offset) + uint(phdr.Filesz)
+		if phdrEnd > end {
+			end = phdrEnd
+		}
+	}
+
+	if ehdr.Shnum > 0 {
+
+		if ehdr.Shoff > ehdr.Phoff {
+			log.Println("reading section headers")
+			m = int(ELF_SECTION_HEADER_SIZE * uintptr(ehdr.Shnum))
+			buf.Grow(int(m))
+			n, err = buf.ReadFrom(r)
+			if n != int64(m) {
+				if err == nil {
+					err = fmt.Errorf("only read %v out of %v bytes", n, m)
+				}
+				log.Println(err)
+				result.err = err
+				return
+			}
+		}
+
+		shdrs := unsafe.Slice((*elf.Section64)(unsafe.Pointer(&(buf.Bytes()[ehdr.Shoff]))), ehdr.Shnum)
+		for i := range shdrs {
+			shdr := &shdrs[i]
+			shdrEnd := uint(shdr.Off) + uint(shdr.Size)
+			if shdrEnd > end {
+				end = shdrEnd
+			}
+		}
+	}
+
+	m = int(int(end) - len(buf.Bytes()))
+	buf.Grow(int(m))
+
+	log.Printf("elf size %#x\n", end)
+
+	log.Println("reading elf data")
+	n, err = buf.ReadFrom(r)
+	if n != int64(m) {
+		if err == nil {
+			err = fmt.Errorf("only read %v out of %v bytes", n, m)
+		}
+		log.Println(err)
+		result.err = err
+		return
+	}
+
+	log.Println("read elf data")
+
+	result.buf = buf.Bytes()
+}
+
+func (info *ElfLoadInfo) LoadElf() error {
+	log.Println("reading payload data")
+
+	out := make(chan elfReadResult)
+
+	go readElfData(info.reader, out)
+
+	// readElfData will close it
+	info.reader = nil
+
+	if info.tracer == nil {
+		if info.pidChannel != nil {
+			log.Println("waiting on ipc to detach")
+			info.pid = <-info.pidChannel
+		}
+		tracer, err := NewTracer(info.pid)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		info.tracer = tracer
+		log.Println("elf loader acquired tracer")
+	}
+
+	data := <-out
+	if data.err != nil {
+		log.Println(data.err)
+		if info.tracer != nil {
+			info.tracer.Kill(false)
+		}
+		return data.err
+	}
+	if data.buf == nil {
+		log.Println("No elf data")
+	}
+	log.Println("elf data read")
+
+	log.Println("Getting kernel proc")
+	proc := GetProc(info.pid)
+	if proc == 0 {
+		return ErrProcNotFound
+	}
+
+	log.Println("Jailbreaking new process")
+
+	proc.Jailbreak(info.payload)
+
+	log.Println("Getting elf loader")
+
+	ldr, err := NewElfLoader(info.pid, info.tracer, data.buf, info.payload)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	// the elf loader now has ownership of the tracer
+	info.tracer = nil
+
+	log.Println("Loading elf into new process")
+
+	return ldr.Run()
 }

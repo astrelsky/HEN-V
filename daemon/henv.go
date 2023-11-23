@@ -47,10 +47,11 @@ type LaunchedAppInfo struct {
 }
 
 type ElfLoadInfo struct {
-	pid     int
-	tracer  *Tracer
-	reader  io.ReadCloser
-	payload bool
+	reader     io.ReadCloser
+	pidChannel chan int
+	pid        int
+	tracer     *Tracer
+	payload    bool
 }
 
 type Payload struct {
@@ -59,22 +60,24 @@ type Payload struct {
 }
 
 type HenV struct {
-	wg               sync.WaitGroup
-	listenerMtx      sync.RWMutex
-	prefixHandlerMtx sync.RWMutex
-	pidMtx           sync.RWMutex
-	payloadMtx       sync.RWMutex
-	prefixHandlers   map[string]AppLaunchPrefixHandler
-	launchListeners  []AppLaunchListener
-	monitoredPids    []int
-	payloadChannel   chan int32
-	listenerChannel  chan int32
-	prefixChannel    chan LaunchedAppInfo
-	homebrewChannel  chan HomebrewLaunchInfo
-	elfChannel       chan ElfLoadInfo
-	msgChannel       chan *AppMessage
-	payloads         [MAX_PAYLOADS]*Payload
-	cancel           context.CancelFunc
+	wg                     sync.WaitGroup
+	listenerMtx            sync.RWMutex
+	prefixHandlerMtx       sync.RWMutex
+	pidMtx                 sync.RWMutex
+	payloadMtx             sync.RWMutex
+	prefixHandlers         map[string]AppLaunchPrefixHandler
+	launchListeners        []AppLaunchListener
+	monitoredPids          []int
+	payloadChannel         chan int
+	finishedPayloadChannel chan int
+	listenerChannel        chan int32
+	prefixChannel          chan LaunchedAppInfo
+	homebrewChannel        chan HomebrewLaunchInfo
+	elfChannel             chan ElfLoadInfo
+	msgChannel             chan *AppMessage
+	payloads               [MAX_PAYLOADS]*Payload
+	cancel                 context.CancelFunc
+	kqueue                 int // file descriptor used for interrupting poll
 }
 
 type AppLaunchListener struct {
@@ -89,19 +92,25 @@ type AppLaunchPrefixHandler struct {
 	id     uint32
 }
 
-func NewHenV() (HenV, context.Context) {
+func NewHenV() (HenV, context.Context, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	kqueue, err := syscall.Kqueue()
+	if err != nil {
+		log.Println(err)
+	}
 	return HenV{
-		launchListeners: []AppLaunchListener{},
-		monitoredPids:   []int{},
-		payloadChannel:  make(chan int32), // unbuffered
-		listenerChannel: make(chan int32, CHANNEL_BUFFER_SIZE),
-		prefixChannel:   make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
-		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
-		elfChannel:      make(chan ElfLoadInfo),        // unbuffered
-		msgChannel:      make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
-		cancel:          cancel,
-	}, ctx
+		launchListeners:        []AppLaunchListener{},
+		monitoredPids:          []int{},
+		payloadChannel:         make(chan int), // unbuffered
+		finishedPayloadChannel: make(chan int), // unbuffered
+		listenerChannel:        make(chan int32, CHANNEL_BUFFER_SIZE),
+		prefixChannel:          make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
+		homebrewChannel:        make(chan HomebrewLaunchInfo), // unbuffered
+		elfChannel:             make(chan ElfLoadInfo),        // unbuffered
+		msgChannel:             make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
+		cancel:                 cancel,
+		kqueue:                 kqueue,
+	}, ctx, err
 }
 
 func (hen *HenV) Wait() {
@@ -361,31 +370,6 @@ func (hen *HenV) hasPrefixHandler(prefix string) bool {
 	return ok
 }
 
-func loadElf(info ElfLoadInfo) error {
-	defer info.reader.Close()
-	log.Println("reading payload data")
-	// FIXME: this blocks forever instead of stopping after all the data has been read
-	data, err := io.ReadAll(info.reader)
-	log.Println("read payload data")
-	if err != nil {
-		log.Println(err)
-		if info.tracer != nil {
-			info.tracer.Detach()
-			return err
-		}
-	}
-	proc := GetProc(info.pid)
-	if proc == 0 {
-		return ErrProcNotFound
-	}
-	proc.Jailbreak(info.payload)
-	ldr, err := NewElfLoader(info.pid, info.tracer, data)
-	if err != nil {
-		return err
-	}
-	return ldr.Run()
-}
-
 func (hen *HenV) elfLoadHandler(ctx context.Context) {
 	defer hen.wg.Done()
 	log.Println("elf loader started")
@@ -397,10 +381,13 @@ func (hen *HenV) elfLoadHandler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case info := <-hen.elfChannel:
-			err := loadElf(info)
-			if err != nil {
-				log.Println(err)
-			}
+			func() {
+				defer info.Close()
+				err := info.LoadElf()
+				if err != nil {
+					log.Println(err)
+				}
+			}()
 		}
 	}
 }

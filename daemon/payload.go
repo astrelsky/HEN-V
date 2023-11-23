@@ -24,10 +24,9 @@ type LocalProcessArgs struct {
 type LocalProcess struct {
 	num int
 	fds [2]int
-	pid int32
 }
 
-func SystemServiceAddLocalProcess(pidChannel <-chan int32, num int) (LocalProcess, error) {
+func SystemServiceAddLocalProcess(num int) (LocalProcess, error) {
 	path := []byte(fmt.Sprintf("/app0/payload%d.bin\x00", num))
 	param := &LocalProcessArgs{a: 1, b: -1}
 	log.Println("calling socket pair")
@@ -64,7 +63,6 @@ func SystemServiceAddLocalProcess(pidChannel <-chan int32, num int) (LocalProces
 	log.Println("got app status")
 
 	argv := []uintptr{0}
-
 	log.Println("calling sceSystemServiceAddLocalProcess")
 	res, _, _ := sceSystemServiceAddLocalProcess.Call(
 		uintptr(status.id),
@@ -75,15 +73,10 @@ func SystemServiceAddLocalProcess(pidChannel <-chan int32, num int) (LocalProces
 	log.Println("sceSystemServiceAddLocalProcess returned")
 	if int(res) < 0 {
 		err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %v", int(res))
+		log.Println(err)
 		cleanup()
 		return LocalProcess{}, err
 	}
-
-	log.Println("waiting for pid to come over the channel")
-
-	info.pid = <-pidChannel
-
-	log.Printf("Received pid %v\n", info.pid)
 
 	return info, nil
 }
@@ -129,38 +122,49 @@ func (hen *HenV) handlePayload(conn net.Conn, ldr chan<- ElfLoadInfo) error {
 	if num == -1 {
 		return ErrTooManyPayloads
 	}
-	proc, err := SystemServiceAddLocalProcess(hen.payloadChannel, num)
+
+	ldr <- ElfLoadInfo{
+		pidChannel: hen.payloadChannel,
+		pid:        -1,
+		tracer:     nil,
+		reader:     conn,
+		payload:    true,
+	}
+
+	conn = nil
+
+	proc, err := SystemServiceAddLocalProcess(num)
 	if err != nil {
 		hen.clearPayloadSlot(num)
 		log.Println(err)
 		return err
 	}
-	ldr <- ElfLoadInfo{
-		pid:     int(proc.pid),
-		tracer:  nil,
-		reader:  conn,
-		payload: true,
-	}
-	conn = nil
-	hen.setPayloadInfo(num, int(proc.pid), proc.fds)
+
+	pid := <-hen.finishedPayloadChannel
+	hen.setPayloadInfo(num, pid, proc.fds)
 
 	// send a SIGUSR1 so we can poll the new local process socket
-	err = syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	if err != nil {
-		// only log this one
-		log.Println(err)
-	}
+	/*
+		err = syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
+		if err != nil {
+			// only log this one
+			log.Println(err)
+		}
+	*/
+	hen.msgInterrupt()
 	return nil
 }
 
 func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 	defer hen.wg.Done()
 	for info := range payloads {
-		log.Printf("received payload pid %v\n", info.pid)
-		err := loadElf(info)
-		if err != nil {
-			log.Println(err)
-		}
+		func() {
+			defer info.Close()
+			err := info.LoadElf()
+			if err != nil {
+				log.Println(err)
+			}
+		}()
 	}
 }
 

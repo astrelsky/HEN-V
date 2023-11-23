@@ -71,7 +71,7 @@ const (
 )
 
 type Tracer struct {
-	syscall_addr   uintptr
+	syscallAddr    uintptr
 	libkernel_base uintptr
 	errno_addr     uintptr
 	pid            int
@@ -110,7 +110,7 @@ var UnexpectedProcessStatusError error = fmt.Errorf("Unexpected process status")
 
 func NewTracer(pid int) (*Tracer, error) {
 	tracer := &Tracer{
-		syscall_addr:   0,
+		syscallAddr:    0,
 		libkernel_base: 0,
 		errno_addr:     0,
 		pid:            pid,
@@ -199,6 +199,9 @@ func (tracer *Tracer) Kill(wait bool) error {
 		log.Println(err)
 		return err
 	}
+
+	defer func() { tracer.pid = 0 }()
+
 	if !wait {
 		return nil
 	}
@@ -216,24 +219,36 @@ func (tracer *Tracer) Kill(wait bool) error {
 	return nil
 }
 
+func (regs *Reg) Carry() bool {
+	return (regs.Rflags & 1) == 1
+}
+
 func (regs *Reg) Dump(w io.Writer) {
-	fmt.Fprintf(w, "rax: %#08x\n", regs.Rax)
-	fmt.Fprintf(w, "rbx: %#08x\n", regs.Rbx)
-	fmt.Fprintf(w, "rcx: %#08x\n", regs.Rcx)
-	fmt.Fprintf(w, "rdx: %#08x\n", regs.Rdx)
-	fmt.Fprintf(w, "rsi: %#08x\n", regs.Rsi)
-	fmt.Fprintf(w, "rdi: %#08x\n", regs.Rdi)
-	fmt.Fprintf(w, "r8:  %#08x\n", regs.R8)
-	fmt.Fprintf(w, "r9:  %#08x\n", regs.R9)
-	fmt.Fprintf(w, "r10: %#08x\n", regs.R10)
-	fmt.Fprintf(w, "r11: %#08x\n", regs.R11)
-	fmt.Fprintf(w, "r12: %#08x\n", regs.R12)
-	fmt.Fprintf(w, "r13: %#08x\n", regs.R13)
-	fmt.Fprintf(w, "r14: %#08x\n", regs.R14)
-	fmt.Fprintf(w, "r15: %#08x\n", regs.R15)
-	fmt.Fprintf(w, "rbp: %#08x\n", regs.Rbp)
-	fmt.Fprintf(w, "rsp: %#08x\n", regs.Rsp)
-	fmt.Fprintf(w, "rip: %#08x\n", regs.Rip)
+	fmt.Fprintf(w, "rax: %#08x\n", uintptr(regs.Rax))
+	fmt.Fprintf(w, "rbx: %#08x\n", uintptr(regs.Rbx))
+	fmt.Fprintf(w, "rcx: %#08x\n", uintptr(regs.Rcx))
+	fmt.Fprintf(w, "rdx: %#08x\n", uintptr(regs.Rdx))
+	fmt.Fprintf(w, "rsi: %#08x\n", uintptr(regs.Rsi))
+	fmt.Fprintf(w, "rdi: %#08x\n", uintptr(regs.Rdi))
+	fmt.Fprintf(w, "r8:  %#08x\n", uintptr(regs.R8))
+	fmt.Fprintf(w, "r9:  %#08x\n", uintptr(regs.R9))
+	fmt.Fprintf(w, "r10: %#08x\n", uintptr(regs.R10))
+	fmt.Fprintf(w, "r11: %#08x\n", uintptr(regs.R11))
+	fmt.Fprintf(w, "r12: %#08x\n", uintptr(regs.R12))
+	fmt.Fprintf(w, "r13: %#08x\n", uintptr(regs.R13))
+	fmt.Fprintf(w, "r14: %#08x\n", uintptr(regs.R14))
+	fmt.Fprintf(w, "r15: %#08x\n", uintptr(regs.R15))
+	fmt.Fprintf(w, "rbp: %#08x\n", uintptr(regs.Rbp))
+	fmt.Fprintf(w, "rsp: %#08x\n", uintptr(regs.Rsp))
+	fmt.Fprintf(w, "rip: %#08x\n", uintptr(regs.Rip))
+	fmt.Fprintf(w, "Trapno: %#08x\n", uintptr(regs.Trapno))
+	fmt.Fprintf(w, "Fs: %#08x\n", uintptr(regs.Fs))
+	fmt.Fprintf(w, "Gs: %#08x\n", uintptr(regs.Gs))
+	fmt.Fprintf(w, "Err: %#08x\n", uintptr(regs.Err))
+	fmt.Fprintf(w, "Es: %#08x\n", uintptr(regs.Es))
+	fmt.Fprintf(w, "Ds: %#08x\n", uintptr(regs.Ds))
+	fmt.Fprintf(w, "Cs: %#08x\n", uintptr(regs.Cs))
+	fmt.Fprintf(w, "Rflags: %#08x\n", uintptr(regs.Rflags))
 }
 
 func _set_args(regs *Reg, a, b, c, d, e, f uintptr) {
@@ -322,30 +337,39 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	return int(jmp.Rax), nil
 }
 
+var (
+	ErrNoProc       = errors.New("failed to get traced proc")
+	ErrNoSyscall    = errors.New("failed to get syscall address for traced proc")
+	ErrGetRegisters = errors.New("failed to get registers")
+	ErrSetRegisters = errors.New("failed to set registers")
+	ErrStep         = errors.New("failed to step traced proc")
+	ErrNoErrno      = errors.New("failed to get errno address for traced proc")
+)
+
 func (tracer *Tracer) startSyscall(backup *Reg, jmp *Reg) (int, error) {
-	if tracer.syscall_addr == 0 {
+	if tracer.syscallAddr == 0 {
 		proc := GetProc(tracer.pid)
 		if proc == 0 {
-			return 0, errors.New("tracer.startSyscall failed to get traced proc")
+			return 0, ErrNoProc
 		}
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			return 0, errors.New("tracer.startSyscall failed to get libkernel for traced proc")
+			return 0, ErrNoLibKernel
 		}
 		addr := lib.GetAddress(_GET_AUTHINFO_NID)
 		if addr == 0 {
-			return 0, errors.New("tracer.startSyscall failed to get syscall address for traced proc")
+			return 0, ErrNoSyscall
 		}
-		tracer.syscall_addr = addr + _SYSCALL_OFFSET
+		tracer.syscallAddr = addr + _SYSCALL_OFFSET
 	}
 
-	jmp.Rip = int64(tracer.syscall_addr)
+	jmp.Rip = int64(tracer.syscallAddr)
 
 	err := tracer.SetRegisters(jmp)
 
 	if err != nil {
 		log.Println(err)
-		return 0, errors.New("tracer.startSyscall set registers failed")
+		return 0, errors.Join(ErrSetRegisters, err)
 	}
 
 	// execute the syscall instruction
@@ -355,25 +379,35 @@ func (tracer *Tracer) startSyscall(backup *Reg, jmp *Reg) (int, error) {
 		err2 := tracer.SetRegisters(backup)
 		if err2 != nil {
 			log.Println(err2)
+			err = errors.Join(err2)
 		}
-		return 0, errors.New("tracer.startSyscall Step failed")
+		return 0, errors.Join(ErrStep, err)
 	}
 
 	err = tracer.GetRegisters(jmp)
 
 	if err != nil {
 		log.Println(err)
-		return 0, errors.New("tracer.startSyscall get registers failed")
+		return 0, errors.Join(ErrGetRegisters, err)
+	}
+
+	var errno syscall.Errno
+	if jmp.Carry() {
+		errno = syscall.Errno(jmp.Rax)
 	}
 
 	// restore registers
 	err = tracer.SetRegisters(backup)
 	if err != nil {
 		log.Println(err)
-		return 0, errors.New("tracer.startSyscall set registers failed")
+		return 0, errors.Join(ErrSetRegisters, err)
 	}
 
-	return int(jmp.Rax), nil
+	if errno != 0 {
+		err = errno
+	}
+
+	return int(jmp.Rax), err
 }
 
 func (tracer *Tracer) Syscall(num int, a, b, c, d, e, f uintptr) (int, error) {
@@ -381,7 +415,7 @@ func (tracer *Tracer) Syscall(num int, a, b, c, d, e, f uintptr) (int, error) {
 	err := tracer.GetRegisters(&jmp)
 	if err != nil {
 		log.Println(err)
-		return 0, errors.New("tracer.Syscall get registers failed")
+		return 0, errors.Join(ErrGetRegisters, err)
 	}
 
 	backup := jmp
@@ -395,18 +429,18 @@ func (tracer *Tracer) Errno() error {
 	if tracer.errno_addr == 0 {
 		proc := GetProc(tracer.pid)
 		if proc == 0 {
-			log.Println("failed to get traced proc")
-			return nil
+			log.Println(ErrNoProc)
+			return ErrNoProc
 		}
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			log.Println("failed to get libkernel for traced proc")
-			return nil
+			log.Println(ErrNoLibKernel)
+			return ErrNoLibKernel
 		}
 		addr := lib.GetAddress(_ERRNO_NID)
 		if addr == 0 {
-			log.Println("failed to get errno address for traced proc")
-			return nil
+			log.Println(ErrNoErrno)
+			return ErrNoErrno
 		}
 		tracer.errno_addr = addr
 	}

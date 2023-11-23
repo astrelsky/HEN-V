@@ -13,6 +13,7 @@ var (
 	ErrBadElfMagic     = errors.New("ELF MAGIC check failed")
 	ErrBadElfByteOrder = errors.New("ELF must be little endian")
 	ErrBadElfClass     = errors.New("ELF must be 64 bit")
+	ErrNoText          = errors.New("ELF .text program header not found")
 )
 
 type Elf64_Addr uint64
@@ -51,6 +52,12 @@ type Elf64_Phdr struct {
 	Memsz   Elf64_Xword
 	Align   Elf64_Xword
 }
+
+const (
+	ELF_HEADER_SIZE         = unsafe.Sizeof(Elf64_Ehdr{})
+	ELF_PROGRAM_HEADER_SIZE = unsafe.Sizeof(Elf64_Phdr{})
+	ELF_SECTION_HEADER_SIZE = unsafe.Sizeof(elf.Section64{})
+)
 
 type Elf64_Dyn struct {
 	d_tag   int
@@ -165,6 +172,8 @@ func parseDynamicTable(ldr *Elf) error {
 		return err
 	}
 
+	log.Println("parsing dynamic table")
+
 	ldr.dyntab = dyn
 
 	var symtabOffset int
@@ -175,30 +184,64 @@ func parseDynamicTable(ldr *Elf) error {
 	for ; dyn.Tag() != elf.DT_NULL; dyn = dyn.Next() {
 		switch dyn.Tag() {
 		case elf.DT_RELA:
-			reltab = ldr.faddr(dyn.Value())
+			value, err := ldr.faddr(dyn.Value())
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			reltab = value
 		case elf.DT_RELASZ:
 			const size = int(unsafe.Sizeof(Elf64_Rela{}))
 			reltabSize = dyn.Value() / size
 		case elf.DT_JMPREL:
-			plttab = ldr.faddr(dyn.Value())
+			value, err := ldr.faddr(dyn.Value())
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			plttab = value
 		case elf.DT_PLTRELSZ:
 			const size = int(unsafe.Sizeof(Elf64_Rela{}))
 			plttabSize = dyn.Value() / size
 		case elf.DT_SYMTAB:
-			symtabOffset = dyn.Value()
+			value, err := ldr.toFileOffset(dyn.Value())
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			symtabOffset = int(value)
 		case elf.DT_STRTAB:
-			ldr.strtab = (*byte)(ldr.faddr(dyn.Value()))
+			value, err := ldr.faddr(dyn.Value())
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			ldr.strtab = (*byte)(value)
 		case elf.DT_HASH:
-			ldr.hashtab = newElfHashTable(ldr.faddr(dyn.Value()))
+			value, err := ldr.faddr(dyn.Value())
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			ldr.hashtab = newElfHashTable(value)
 		case elf.DT_GNU_HASH:
-			ldr.gnuhash = newGnuHashTable(ldr.faddr(dyn.Value()))
+			value, err := ldr.faddr(dyn.Value())
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			ldr.gnuhash = newGnuHashTable(value)
 		default:
 		}
 	}
 
 	if symtabOffset != 0 {
 		// just fake a symtab size to make a slice
-		symtab := ldr.faddr(symtabOffset)
+		symtab, err := ldr.faddr(symtabOffset)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 		symtabsize := (len(ldr.data) - symtabOffset) / int(unsafe.Sizeof(Elf64_Sym{}))
 		ldr.symtab = unsafe.Slice((*Elf64_Sym)(symtab), symtabsize)
 	}
@@ -266,6 +309,11 @@ func (phdr *Elf64_Phdr) Flags() elf.ProgFlag {
 	return elf.ProgFlag(phdr.p_flags)
 }
 
+func (phdr *Elf64_Phdr) Loadable() bool {
+	flags := phdr.Type()
+	return flags == elf.PT_LOAD || flags == elf.PT_GNU_EH_FRAME
+}
+
 func (dyn *Elf64_Dyn) Tag() elf.DynTag {
 	return elf.DynTag(dyn.d_tag)
 }
@@ -294,22 +342,23 @@ func (ldr *Elf) getDataAt(offset int) unsafe.Pointer {
 	return unsafe.Add(unsafe.Pointer(&ldr.data[0]), offset)
 }
 
-func (ldr *Elf) getTextHeader() *Elf64_Phdr {
+func (ldr *Elf) getTextHeader() (*Elf64_Phdr, error) {
 	if ldr.textIndex != -1 {
-		return &ldr.phdrs[ldr.textIndex]
+		return &ldr.phdrs[ldr.textIndex], nil
 	}
 
+	log.Println("Getting text header")
+
 	for i := range ldr.phdrs {
+		log.Printf("phdr %v %s\n", i, ldr.phdrs[i].Flags())
 		if (ldr.phdrs[i].Flags() & elf.PF_X) != 0 {
-			if ldr.phdrs[i].Paddr <= ldr.ehdr.Entry && (ldr.phdrs[i].Paddr+Elf64_Addr(ldr.phdrs[i].Filesz)) < ldr.ehdr.Entry {
-				ldr.textIndex = i
-				return &ldr.phdrs[ldr.textIndex]
-			}
+			ldr.textIndex = i
+			return &ldr.phdrs[ldr.textIndex], nil
 		}
 	}
 
-	log.Println("text section not found")
-	return nil
+	log.Println(ErrNoText)
+	return nil, ErrNoText
 }
 
 func findDynamicTable(ldr *Elf) (*Elf64_Dyn, error) {
@@ -323,17 +372,25 @@ func findDynamicTable(ldr *Elf) (*Elf64_Dyn, error) {
 	return nil, ErrNoDynamicTable
 }
 
-func (ldr *Elf) toFileOffset(addr int) int {
-	text := ldr.getTextHeader()
-	if Elf64_Addr(addr) >= text.Vaddr {
-		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset))
+func (ldr *Elf) toFileOffset(addr int) (int, error) {
+	text, err := ldr.getTextHeader()
+	if err != nil {
+		log.Println(err)
+		return 0, err
 	}
-	return addr
+	if Elf64_Addr(addr) >= text.Vaddr {
+		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset)), nil
+	}
+	return addr, nil
 }
 
-func (ldr *Elf) faddr(addr int) unsafe.Pointer {
-	addr = ldr.toFileOffset(addr)
-	return unsafe.Pointer(&ldr.data[addr])
+func (ldr *Elf) faddr(addr int) (unsafe.Pointer, error) {
+	addr, err := ldr.toFileOffset(addr)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+	return unsafe.Pointer(&ldr.data[addr]), nil
 }
 
 func (ldr *Elf) getString(i int) string {

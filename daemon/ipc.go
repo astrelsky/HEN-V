@@ -205,10 +205,12 @@ func getUnexpectedSignalError(sig syscall.Signal) error {
 }
 
 func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
-	defer tracer.Detach()
 	defer func() {
 		if err != nil {
 			tracer.Kill(false)
+		}
+		if tracer != nil {
+			tracer.Detach()
 		}
 	}()
 	log.Println("getting registers")
@@ -386,7 +388,12 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 	if titleid == HenVTitleId {
 		// payload
 		log.Println("sending payload pid")
-		hen.payloadChannel <- int32(tracer.pid)
+		// send two due to design flaw
+		pid := tracer.pid
+		tracer.Detach()
+		tracer = nil
+		hen.payloadChannel <- pid
+		hen.finishedPayloadChannel <- pid
 		return
 	}
 

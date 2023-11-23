@@ -101,6 +101,18 @@ type PollFd struct {
 	revents int16
 }
 
+func (hen *HenV) msgInterrupt() {
+	hen.payloadMtx.Lock()
+	defer hen.payloadMtx.Unlock()
+	syscall.Close(hen.kqueue)
+	kqueue, err := syscall.Kqueue()
+	if err != nil {
+		kqueue = -1
+		log.Println(err)
+	}
+	hen.kqueue = kqueue
+}
+
 func (hen *HenV) getPayloadFileDescriptors() []PollFd {
 	hen.payloadMtx.RLock()
 	defer hen.payloadMtx.RUnlock()
@@ -186,6 +198,7 @@ func (hen *HenV) pollPayloadMessages() error {
 	fds := hen.getPayloadFileDescriptors()
 	_, _, err := syscall.Syscall(syscall.SYS_POLL, uintptr(unsafe.Pointer(&fds[0])), uintptr(len(fds)), INFINITE_TIME)
 	if err != 0 {
+		log.Println(err.Error())
 		return err
 	}
 	for i := range fds {

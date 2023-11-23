@@ -5,14 +5,16 @@ import (
 )
 
 func init() {
-	println("main.init reached")
 	log.SetFlags(log.Flags() | log.Lshortfile)
 	log.SetPrefix("[HEN-V] ")
 }
 
 func main() {
-	println("Hello World")
-	hen, ctx := NewHenV()
+	hen, ctx, err := NewHenV()
+	if err != nil {
+		log.Println(err)
+		return
+	}
 	hen.Start(ctx)
 	hen.Wait()
 }

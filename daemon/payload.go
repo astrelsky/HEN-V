@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"syscall"
 	"unsafe"
 )
 
 const PAYLOAD_ADDRESS = ":9020"
-
-var ErrTooManyPayloads = errors.New("Too many payloads are already running")
 
 type LocalProcessArgs struct {
 	fds [2]int32
@@ -22,137 +21,170 @@ type LocalProcessArgs struct {
 }
 
 type LocalProcess struct {
-	num int
-	fds [2]int
+	num    int
+	writer net.Conn
+	reader net.Conn
 }
 
-func SystemServiceAddLocalProcess(num int) (LocalProcess, error) {
-	path := []byte(fmt.Sprintf("/app0/payload%d.bin\x00", num))
-	param := &LocalProcessArgs{a: 1, b: -1}
-	log.Println("calling socket pair")
+func (p *LocalProcess) Close() (err error) {
+	if p.writer != nil {
+		err = p.writer.Close()
+		p.writer = nil
+	}
+	if p.reader != nil {
+		err = errors.Join(p.reader.Close())
+		p.reader = nil
+	}
+	return
+}
+
+func (lp *LocalProcess) Read(p []byte) (int, error) {
+	return lp.reader.Read(p)
+}
+
+func (lp *LocalProcess) Write(p []byte) (int, error) {
+	return lp.writer.Write(p)
+}
+
+type ProcessSocket struct {
+	net.Conn
+	fp *os.File
+	fd int
+}
+
+func NewProcessSocket(fd int, name string) (s *ProcessSocket, err error) {
+	fp := os.NewFile(uintptr(fd), name)
+	conn, err := net.FileConn(fp)
+	if err != nil {
+		fp.Close()
+		log.Println(err)
+		return
+	}
+	s = &ProcessSocket{Conn: conn, fp: fp, fd: fd}
+	return
+}
+
+func (s *ProcessSocket) Close() (err error) {
+	if s.fd != -1 {
+		err = s.Conn.Close()
+		err = errors.Join(err, s.fp.Close())
+		err = errors.Join(err, syscall.Close(s.fd))
+		s.fd = -1
+	}
+	return
+}
+
+func newLocalProcess(num int, fd0, fd1 *int32) (p *LocalProcess, err error) {
+	var writeFile *ProcessSocket
+	var readFile *ProcessSocket
+
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
-	log.Println("socket pair returned")
 	if err != nil {
 		log.Println(err)
-		return LocalProcess{}, err
+		return
 	}
 
-	cleanup := func() {
-		e := syscall.Close(fds[0])
-		if e != nil {
-			log.Panicln(e)
+	defer func() {
+		if err == nil {
+			return
 		}
-		e = syscall.Close(fds[1])
-		if e != nil {
-			log.Panicln(e)
+		if writeFile != nil {
+			writeFile.Close()
+		} else {
+			syscall.Close(fds[0])
 		}
+		if readFile != nil {
+			readFile.Close()
+		} else {
+			syscall.Close(fds[1])
+		}
+	}()
+
+	writeFile, err = NewProcessSocket(fds[0], fmt.Sprintf("payload%d-write-socket", num))
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	*fd0 = int32(fds[0])
+
+	readFile, err = NewProcessSocket(fds[1], fmt.Sprintf("payload%d-read-socket", num))
+	if err != nil {
+		log.Println(err)
+		return
 	}
 
-	info := LocalProcess{num: num, fds: [2]int{fds[0], fds[1]}}
-	param.fds[0] = int32(fds[0])
-	param.fds[1] = int32(fds[1])
+	*fd1 = int32(fds[1])
 
-	log.Println("getting app status")
+	p = &LocalProcess{num: num, writer: writeFile, reader: readFile}
+	writeFile = nil
+	readFile = nil
+	return
+}
+
+func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err error) {
+	var p *LocalProcess
+	defer func() {
+		if err == nil {
+			return
+		}
+		hen.payloads.Clear(num)
+		if p != nil {
+			p.Close()
+		}
+	}()
+
+	param := &LocalProcessArgs{a: 1, b: -1}
+	p, err = newLocalProcess(num, &param.fds[0], &param.fds[1])
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
 	status, err := SystemServiceGetAppStatus()
 	if err != nil {
 		log.Println(err)
-		cleanup()
-		return LocalProcess{}, err
+		return
 	}
 
-	log.Println("got app status")
+	hen.wg.Add(1)
+	go func() {
+		defer hen.wg.Done()
 
-	argv := []uintptr{0}
-	log.Println("calling sceSystemServiceAddLocalProcess")
-	res, _, _ := sceSystemServiceAddLocalProcess.Call(
-		uintptr(status.id),
-		uintptr(unsafe.Pointer(&path[0])),
-		uintptr(unsafe.Pointer(&argv[0])),
-		uintptr(unsafe.Pointer(param)),
-	)
-	log.Println("sceSystemServiceAddLocalProcess returned")
-	if int(res) < 0 {
-		err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %v", int(res))
-		log.Println(err)
-		cleanup()
-		return LocalProcess{}, err
-	}
-
-	return info, nil
-}
-
-func (hen *HenV) getNextPayloadNum() int {
-	hen.payloadMtx.Lock()
-	defer hen.payloadMtx.Unlock()
-	for i := range hen.payloads {
-		if hen.payloads[i] == nil {
-			hen.payloads[i] = &Payload{} // in progress
-			return i
+		argv := []uintptr{0}
+		path := []byte(fmt.Sprintf("/app0/payload%d.bin\x00", num))
+		res, _, _ := sceSystemServiceAddLocalProcess.Call(
+			uintptr(status.id),
+			uintptr(unsafe.Pointer(&path[0])),
+			uintptr(unsafe.Pointer(&argv[0])),
+			uintptr(unsafe.Pointer(param)),
+		)
+		if int(res) < 0 {
+			err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %v", int(res))
+			log.Println(err)
+			hen.payloads.Clear(num)
+			return
 		}
-	}
-	return -1
-}
-
-func (hen *HenV) setPayloadPid(pid int32, num int) {
-	hen.payloadMtx.Lock()
-	defer hen.payloadMtx.Unlock()
-	hen.payloads[num].pid = int(pid)
-}
-
-func (hen *HenV) clearPayloadSlot(num int) {
-	hen.payloadMtx.Lock()
-	defer hen.payloadMtx.Unlock()
-	hen.payloads[num] = nil
-}
-
-func (hen *HenV) setPayloadInfo(num int, pid int, fds [2]int) {
-	hen.payloadMtx.Lock()
-	defer hen.payloadMtx.Unlock()
-	*hen.payloads[num] = Payload{pid: pid, fds: fds}
-	log.Printf("payload %v registered for pid %v\n", num, pid)
-}
-
-func (hen *HenV) handlePayload(conn net.Conn, ldr chan<- ElfLoadInfo) error {
-	defer func() {
-		// ownership gets transfered to the channel receiver
-		if conn != nil {
-			conn.Close()
-		}
+		hen.wg.Add(1)
+		go hen.processPayloadMessages(p, ctx)
 	}()
-	num := hen.getNextPayloadNum()
-	if num == -1 {
-		return ErrTooManyPayloads
-	}
 
-	ldr <- ElfLoadInfo{
-		pidChannel: hen.payloadChannel,
-		pid:        -1,
-		tracer:     nil,
-		reader:     conn,
-		payload:    true,
-	}
+	return
+}
 
-	conn = nil
-
-	proc, err := SystemServiceAddLocalProcess(num)
+func (hen *HenV) handlePayload(ctx context.Context) error {
+	num, err := hen.payloads.Next()
 	if err != nil {
-		hen.clearPayloadSlot(num)
 		log.Println(err)
 		return err
 	}
 
-	pid := <-hen.finishedPayloadChannel
-	hen.setPayloadInfo(num, pid, proc.fds)
+	err = SystemServiceAddLocalProcess(num, hen, ctx)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
 
-	// send a SIGUSR1 so we can poll the new local process socket
-	/*
-		err = syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-		if err != nil {
-			// only log this one
-			log.Println(err)
-		}
-	*/
-	hen.msgInterrupt()
 	return nil
 }
 
@@ -161,15 +193,9 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 	for info := range payloads {
 		func() {
 			defer info.Close()
-			err := info.LoadElf()
+			err := info.LoadElf(hen)
 			if err != nil {
 				log.Println(err)
-			}
-			proc := _getFirstProc()
-			for proc != 0 {
-				pid := proc.GetPid()
-				log.Printf("pid: %v\n", pid)
-				proc = proc.next()
 			}
 		}()
 	}
@@ -177,20 +203,27 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 
 func (hen *HenV) runPayloadServer(ctx context.Context) {
 	defer hen.wg.Done()
+
 	log.Println("payload server started")
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	ldr := make(chan ElfLoadInfo, 4)
 	defer close(ldr)
+
 	hen.wg.Add(1)
 	go hen.payloadHandler(ldr)
+
 	var cfg net.ListenConfig
 	ln, err := cfg.Listen(ctx, "tcp", PAYLOAD_ADDRESS)
 	if err != nil {
 		// NO PAYLOADS FOR YOU
 		log.Println(err)
+		log.Println("payload server failed to start")
 		return
 	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -201,9 +234,18 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 				log.Println(err)
 				continue
 			}
-			err = hen.handlePayload(conn, ldr)
+
+			ldr <- ElfLoadInfo{
+				pidChannel: hen.payloadChannel,
+				pid:        -1,
+				reader:     conn,
+				payload:    true,
+			}
+
+			err = hen.handlePayload(ctx)
 			if err != nil {
 				log.Println(err)
+				conn.Close()
 			}
 		}
 	}

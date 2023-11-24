@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"sync"
-	"syscall"
 	"time"
 	"unsafe"
 )
@@ -53,6 +52,13 @@ type AppMessage struct {
 	rw        io.ReadWriter
 }
 
+type ExternalAppMessage struct {
+	sender      uint32
+	msgType     uint32
+	payloadSize uint64
+	// payload     [INTERNAL_APP_MESSAGE_PAYLOAD_SIZE]byte
+}
+
 var internalMessageBuffer InternalAppMessage
 var internalMessageBufferMtx sync.Mutex
 
@@ -75,9 +81,10 @@ func SceAppMessagingReceiveMsg() (AppMessage, error) {
 	msg := AppMessage{
 		sender:  internalMessageBuffer.sender,
 		msgType: AppMessageType(internalMessageBuffer.msgType),
+		payload: make([]byte, internalMessageBuffer.payloadSize),
 		//timestamp: tstamp,
 	}
-	copy(msg.payload, internalMessageBuffer.payload[:internalMessageBuffer.payloadSize])
+	copy(msg.payload, internalMessageBuffer.payload[:])
 	return msg, nil
 }
 
@@ -95,6 +102,44 @@ func SceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, fla
 	return nil
 }
 
+func (hen *HenV) processPayloadMessages(p *LocalProcess, ctx context.Context) {
+	defer hen.wg.Done()
+	defer p.Close()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := ctx.Done()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			emsg := ExternalAppMessage{}
+			const length = unsafe.Sizeof(emsg)
+			buf := unsafe.Slice((*byte)(unsafe.Pointer(&emsg)), length)
+			n, err := p.Read(buf)
+			if n < int(length) {
+				log.Printf("only read %v out of %v bytes\n", n, length)
+				return
+			}
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			msg := &AppMessage{
+				sender:    emsg.sender,
+				msgType:   AppMessageType(emsg.msgType),
+				payload:   make([]byte, emsg.payloadSize),
+				timestamp: time.Now(),
+				rw:        p,
+			}
+			hen.msgChannel <- msg
+		}
+	}
+}
+
+/*
 type PollFd struct {
 	fd      int32
 	events  int16
@@ -233,3 +278,4 @@ func (hen *HenV) payloadMessageReceiver(ctx context.Context) {
 		}
 	}
 }
+*/

@@ -10,11 +10,7 @@ func init() {
 }
 
 func main() {
-	hen, ctx, err := NewHenV()
-	if err != nil {
-		log.Println(err)
-		return
-	}
+	hen, ctx := NewHenV()
 	hen.Start(ctx)
 	hen.Wait()
 }

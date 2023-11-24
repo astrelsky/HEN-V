@@ -200,8 +200,6 @@ func (tracer *Tracer) Kill(wait bool) error {
 		return err
 	}
 
-	defer func() { tracer.pid = 0 }()
-
 	if !wait {
 		return nil
 	}
@@ -534,4 +532,51 @@ func (tracer *Tracer) Close(fd int) (int, error) {
 
 func (tracer *Tracer) Socket(domain int, socktype int, protocol int) (int, error) {
 	return tracer.Syscall(syscall.SYS_SOCKET, uintptr(domain), uintptr(socktype), uintptr(protocol), 0, 0, 0)
+}
+
+func (tracer *Tracer) Backtrace(name string) (err error) {
+	p := GetProc(tracer.pid)
+	if p == 0 {
+		log.Println("proc already died")
+		return
+	}
+	lib := p.GetLib(LIBKERNEL_HANDLE)
+	if lib == 0 {
+		log.Println("libkernel not found")
+		return
+	}
+	const BACKTRACE Nid = "rb8JKArrzc0"
+	addr := lib.GetAddress(BACKTRACE)
+	if addr == 0 {
+		log.Println("failed to get sceKernelPrintBacktraceWithModuleInfo")
+		return
+	}
+	var jmp Reg
+	err = tracer.GetRegisters(&jmp)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	backup := jmp
+	rsp := backup.Rsp - int64(len(name)+1)
+	jmp.Rsp = rsp
+	correctRsp(&jmp)
+
+	str, err := syscall.BytePtrFromString(name)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	_, err = UserlandCopyinUnsafe(tracer.pid, uintptr(rsp), unsafe.Pointer(str), len(name)+1)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	jmp.Rdi = rsp
+	jmp.Rip = int64(addr)
+	_, err = tracer.startCall(&backup, &jmp)
+	return
 }

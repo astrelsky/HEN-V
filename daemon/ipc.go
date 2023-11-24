@@ -25,6 +25,7 @@ var (
 	ErrNoLibKernel       = errors.New("failed to get libkernel")
 	ErrNoEboot           = errors.New("failed to get eboot")
 	ErrNoUsleep          = errors.New("failed to find usleep")
+	ErrBadImageBase      = errors.New("invalid image base")
 	ErrCopyLoop          = errors.New("failed to copyin usleep loop")
 	ErrUnexpectedRip     = errors.New("unexpected rip value, something went wrong")
 )
@@ -213,7 +214,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 			tracer.Detach()
 		}
 	}()
-	log.Println("getting registers")
+
 	var regs Reg
 	err = tracer.GetRegisters(&regs)
 	if err != nil {
@@ -223,15 +224,11 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 
 	regs.Rip = int64(fun)
 
-	log.Println("setting registers")
-
 	err = tracer.SetRegisters(&regs)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-
-	log.Println("running until execve completion")
 
 	// run until execve completion
 	err = tracer.Continue()
@@ -240,15 +237,11 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("waiting")
-
 	status, err := tracer.Wait(0)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-
-	log.Println("finished waiting")
 
 	if !status.Stopped() {
 		err = ErrProcessNotStopped
@@ -256,15 +249,11 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("checking signal")
-
 	if status.StopSignal() != syscall.SIGTRAP {
 		err = getUnexpectedSignalError(status.StopSignal())
 		log.Println(err)
 		return
 	}
-
-	log.Println("getting kernel proc")
 
 	var proc KProc
 	for {
@@ -282,16 +271,12 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 
 	loop := NewLoopBuilder()
 
-	log.Println("getting libkernel handle")
-
 	lib := proc.GetLib(LIBKERNEL_HANDLE)
 	if lib == 0 {
 		err = ErrNoLibKernel
 		log.Println(err)
 		return
 	}
-
-	log.Println("getting usleep address")
 
 	usleep := lib.GetAddress(USLEEP_NID)
 	if usleep == 0 {
@@ -302,8 +287,6 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 
 	loop.setUsleepAddress(usleep)
 
-	log.Println("getting eboot")
-
 	eboot := proc.GetEboot()
 	if eboot == 0 {
 		err = ErrNoEboot
@@ -311,21 +294,20 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("getting imagebase")
-
 	base := eboot.GetImageBase()
 
-	log.Println("patching entrypoint")
+	if base == 0 {
+		err = ErrBadImageBase
+		log.Println(err)
+		return
+	}
 
-	n, err := UserlandCopyin(tracer.pid, base+ENTRYPOINT_OFFSET, loop.data[:])
+	_, err = UserlandCopyin(tracer.pid, base+ENTRYPOINT_OFFSET, loop.data[:])
 	if err != nil {
 		err = errors.Join(ErrCopyLoop, err)
 		log.Println(err)
 		return
 	}
-	log.Printf("wrote %v bytes at %#08x in pid %v\n", n, base+ENTRYPOINT_OFFSET, tracer.pid)
-
-	log.Println("continuing...")
 
 	err = tracer.Continue()
 	if err != nil {
@@ -333,15 +315,11 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("waiting...")
-
 	status, err = tracer.Wait(0)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-
-	log.Println("done waiting")
 
 	if !status.Stopped() {
 		err = ErrProcessNotStopped
@@ -349,15 +327,11 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("checking signal")
-
 	if status.StopSignal() != syscall.SIGTRAP {
 		err = getUnexpectedSignalError(status.StopSignal())
 		log.Println(err)
 		return
 	}
-
-	log.Println("getting registers")
 
 	err = tracer.GetRegisters(&regs)
 	if err != nil {
@@ -371,8 +345,6 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("getting app info")
-
 	// success
 
 	info, err := GetAppInfo(tracer.pid)
@@ -381,19 +353,14 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 		return
 	}
 
-	log.Println("getting titleid")
-
 	titleid := info.TitleId()
-	log.Printf("titleid: %s\n", titleid)
 	if titleid == HenVTitleId {
 		// payload
-		log.Println("sending payload pid")
-		// send two due to design flaw
 		pid := tracer.pid
+		// we need to detatch before attempting to send it over the channel
 		tracer.Detach()
 		tracer = nil
 		hen.payloadChannel <- pid
-		hen.finishedPayloadChannel <- pid
 		return
 	}
 

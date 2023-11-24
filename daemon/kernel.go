@@ -8,11 +8,11 @@ import (
 	"unsafe"
 )
 
+var kmemMtx sync.Mutex
+
 type KernelMemoryReader struct {
 	Address uintptr
 }
-
-var kmemMtx sync.Mutex
 
 func KernelCopyout(ksrc uintptr, p []byte) (n int, err error) {
 	kmemMtx.Lock()

@@ -23,8 +23,11 @@ const (
 	PREFIX_LENGTH = 4
 )
 
-var HenVTitleId string
-var ErrProcNotFound = errors.New("proccess not found")
+var (
+	HenVTitleId        string
+	ErrProcNotFound    = errors.New("proccess not found")
+	ErrTooManyPayloads = errors.New("max payload limit reached")
+)
 
 func init() {
 	info, err := GetAppInfo(syscall.Getpid())
@@ -54,30 +57,33 @@ type ElfLoadInfo struct {
 	payload    bool
 }
 
+type PayloadFlag struct {
+	mtx   sync.Mutex
+	value uint16
+}
+
 type Payload struct {
 	pid int
 	fds [2]int
 }
 
 type HenV struct {
-	wg                     sync.WaitGroup
-	listenerMtx            sync.RWMutex
-	prefixHandlerMtx       sync.RWMutex
-	pidMtx                 sync.RWMutex
-	payloadMtx             sync.RWMutex
-	prefixHandlers         map[string]AppLaunchPrefixHandler
-	launchListeners        []AppLaunchListener
-	monitoredPids          []int
-	payloadChannel         chan int
-	finishedPayloadChannel chan int
-	listenerChannel        chan int32
-	prefixChannel          chan LaunchedAppInfo
-	homebrewChannel        chan HomebrewLaunchInfo
-	elfChannel             chan ElfLoadInfo
-	msgChannel             chan *AppMessage
-	payloads               [MAX_PAYLOADS]*Payload
-	cancel                 context.CancelFunc
-	kqueue                 int // file descriptor used for interrupting poll
+	wg               sync.WaitGroup
+	listenerMtx      sync.RWMutex
+	prefixHandlerMtx sync.RWMutex
+	pidMtx           sync.RWMutex
+	payloadMtx       sync.RWMutex
+	prefixHandlers   map[string]AppLaunchPrefixHandler
+	launchListeners  []AppLaunchListener
+	monitoredPids    chan int
+	payloadChannel   chan int
+	listenerChannel  chan int32
+	prefixChannel    chan LaunchedAppInfo
+	homebrewChannel  chan HomebrewLaunchInfo
+	elfChannel       chan ElfLoadInfo
+	msgChannel       chan *AppMessage
+	payloads         PayloadFlag
+	cancel           context.CancelFunc
 }
 
 type AppLaunchListener struct {
@@ -92,25 +98,47 @@ type AppLaunchPrefixHandler struct {
 	id     uint32
 }
 
-func NewHenV() (HenV, context.Context, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	kqueue, err := syscall.Kqueue()
-	if err != nil {
-		log.Println(err)
+func (f *PayloadFlag) Set(i int) {
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
+	f.value |= 1 << i
+}
+
+func (f *PayloadFlag) Clear(i int) {
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
+	f.value &= ^(1 << i)
+}
+
+func (f *PayloadFlag) Next() (n int, err error) {
+	f.mtx.Lock()
+	defer f.mtx.Unlock()
+	for i := 0; i <= MAX_PAYLOADS; i++ {
+		var mask uint16 = 1 << i
+		if (f.value & mask) == 0 {
+			n = i
+			f.value |= mask
+			return
+		}
 	}
+	err = ErrTooManyPayloads
+	log.Println(err)
+	return
+}
+
+func NewHenV() (HenV, context.Context) {
+	ctx, cancel := context.WithCancel(context.Background())
 	return HenV{
-		launchListeners:        []AppLaunchListener{},
-		monitoredPids:          []int{},
-		payloadChannel:         make(chan int), // unbuffered
-		finishedPayloadChannel: make(chan int), // unbuffered
-		listenerChannel:        make(chan int32, CHANNEL_BUFFER_SIZE),
-		prefixChannel:          make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
-		homebrewChannel:        make(chan HomebrewLaunchInfo), // unbuffered
-		elfChannel:             make(chan ElfLoadInfo),        // unbuffered
-		msgChannel:             make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
-		cancel:                 cancel,
-		kqueue:                 kqueue,
-	}, ctx, err
+		launchListeners: []AppLaunchListener{},
+		monitoredPids:   make(chan int), // unbuffered
+		payloadChannel:  make(chan int), // unbuffered
+		listenerChannel: make(chan int32, CHANNEL_BUFFER_SIZE),
+		prefixChannel:   make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
+		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
+		elfChannel:      make(chan ElfLoadInfo),        // unbuffered
+		msgChannel:      make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
+		cancel:          cancel,
+	}, ctx
 }
 
 func (hen *HenV) Wait() {
@@ -120,9 +148,11 @@ func (hen *HenV) Wait() {
 func (hen *HenV) Close() error {
 	log.Println("NO MORE HOMEBREW FOR YOU!")
 	hen.cancel()
+	close(hen.monitoredPids)
 	close(hen.payloadChannel)
 	close(hen.listenerChannel)
 	close(hen.prefixChannel)
+	close(hen.homebrewChannel)
 	close(hen.elfChannel)
 	close(hen.msgChannel)
 	return nil
@@ -221,66 +251,95 @@ func mountProcFs() (int, error) {
 	return syscall.Open("/mnt/proc", syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0666)
 }
 
+func procWait(wg *sync.WaitGroup, pid int) {
+	defer wg.Done()
+
+	tracer, err := NewTracer(pid)
+
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	defer tracer.Detach()
+
+	tracer.Continue()
+
+	for {
+		state, err := tracer.Wait(0)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		if state.Exited() {
+			log.Printf("proceess %v exited\n", pid)
+			return
+		}
+		if state.Signaled() {
+			log.Printf("process %v received signal %s\n", pid, state.Signal())
+		} else if state.Stopped() {
+			sig := state.StopSignal()
+
+			if sig == syscall.SIGKILL {
+				err = tracer.Kill(false)
+				if err != nil {
+					log.Println(err)
+				}
+				return
+			}
+
+			if sig == syscall.SIGILL || sig == syscall.SIGSEGV {
+				// TODO: print backtrace and then kill
+				err = tracer.Backtrace("payload")
+				if err != nil {
+					log.Println(err)
+					return
+				}
+
+				tracer.Close(3)
+				return
+			}
+
+			log.Printf("process %v stopped on signal %s\n", pid, sig)
+
+			err = tracer.Continue()
+			if err != nil {
+				log.Println(err)
+				return
+			}
+		} else {
+			log.Println("wait returned for no reason?")
+		}
+	}
+}
+
 func (hen *HenV) runProcessMonitor(ctx context.Context) {
 	defer hen.wg.Done()
 	log.Println("process monitor started")
 	ctx, cancel := context.WithCancel(ctx)
-	pids := make(chan uint32, 4)
-	hen.wg.Add(1)
-	go hen.exitedProcessHandler(pids)
-
 	defer cancel()
-	defer close(pids)
 
-	fd, err := mountProcFs()
-	if err != nil {
-		panic(err)
-	}
-
-	defer syscall.Close(fd)
-
-	kq, err := syscall.Kqueue()
-	if err != nil {
-		panic(err)
-	}
-
-	defer syscall.Close(kq)
-
-	events := []syscall.Kevent_t{
-		{
-			Ident:  uint64(fd),
-			Filter: syscall.EVFILT_VNODE,
-			Flags:  syscall.EV_ADD | syscall.EV_CLEAR,
-			Fflags: syscall.NOTE_LINK,
-		},
-	}
-
-	_, err = syscall.Kevent(kq, events, nil, nil)
-	if err != nil {
-		panic(err)
-	}
+	done := ctx.Done()
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-done:
 			return
-		default:
-			_, err = syscall.Kevent(kq, nil, events, nil)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			log.Println("process event occured")
+		case pid := <-hen.monitoredPids:
+			hen.wg.Add(1)
+			go procWait(&hen.wg, pid)
 		}
 	}
 }
 
 func (hen *HenV) homebrewHandler(ctx context.Context) {
 	defer hen.wg.Done()
+
 	log.Println("homebrew handler started")
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer close(hen.homebrewChannel)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -383,7 +442,7 @@ func (hen *HenV) elfLoadHandler(ctx context.Context) {
 		case info := <-hen.elfChannel:
 			func() {
 				defer info.Close()
-				err := info.LoadElf()
+				err := info.LoadElf(hen)
 				if err != nil {
 					log.Println(err)
 				}

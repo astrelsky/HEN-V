@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -480,8 +481,12 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 				log.Println(err)
 				return err
 			}
-			*(*uintptr)(symaddr) = ldr.imagebase + uintptr(rel.r_addend)
-
+			vaddr, err := ldr.toVirtualAddress(uintptr(rel.r_addend))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			*(*uintptr)(symaddr) = vaddr
 		case elf.R_X86_64_JMP_SLOT:
 			// edge case where the dynamic relocation sections are merged
 			libsym, err := ldr.getSymbolAddress(rel)
@@ -561,9 +566,6 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 
 	files[1] = int32(fd)
 
-	log.Printf("master socket: %d\n", files[0])
-	log.Printf("victim socket: %d\n", files[1])
-
 	if files[0] == -1 || files[1] == -1 {
 		return
 	}
@@ -576,8 +578,6 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 
 	files[2] = int32(pipes[0])
 	files[3] = int32(pipes[1])
-
-	log.Printf("rw pipes: %d, %d\n", files[2], files[3])
 
 	buf := [...]uint32{20, syscall.IPPROTO_IPV6, syscall.IPV6_TCLASS, 0, 0, 0}
 	const bufSize = int(unsafe.Sizeof(buf))
@@ -728,7 +728,6 @@ func (ldr *ElfLoader) start(args uintptr) error {
 	}
 
 	// it will run on detatch
-	log.Println("great success")
 	return nil
 }
 
@@ -779,6 +778,14 @@ func (ldr *ElfLoader) Run() error {
 	return ldr.start(args)
 }
 
+func (ldr *ElfLoader) Close() (err error) {
+	if ldr.tracer != nil {
+		err = ldr.tracer.Detach()
+		ldr.tracer = nil
+	}
+	return
+}
+
 func (info *ElfLoadInfo) Close() (err error) {
 	if info.reader != nil {
 		err = info.reader.Close()
@@ -791,10 +798,9 @@ func (info *ElfLoadInfo) Close() (err error) {
 	return
 }
 
-func readElfData(r io.ReadCloser, res chan elfReadResult) {
+func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
+	defer wg.Done()
 	defer r.Close()
-
-	log.Println("reading elf")
 
 	var result elfReadResult
 
@@ -813,8 +819,6 @@ func readElfData(r io.ReadCloser, res chan elfReadResult) {
 
 	buf := ByteBuilder{}
 
-	log.Println("reading elf header")
-
 	buf.Grow(int(ELF_HEADER_SIZE))
 
 	// TODO read elf
@@ -830,17 +834,11 @@ func readElfData(r io.ReadCloser, res chan elfReadResult) {
 		return
 	}
 
-	log.Println("read elf header")
-
-	log.Println("checking elf header")
-
 	result.err = checkElf(buf.Bytes())
 	if result.err != nil {
 		log.Println(result.err)
 		return
 	}
-
-	log.Println("elf header ok")
 
 	ehdr := *(*Elf64_Ehdr)(unsafe.Pointer(&(buf.Bytes()[0])))
 	if ehdr.Phoff > Elf64_Off(ELF_HEADER_SIZE) {
@@ -856,8 +854,6 @@ func readElfData(r io.ReadCloser, res chan elfReadResult) {
 		}
 	}
 
-	log.Println("reading program headers")
-
 	m := int(ELF_PROGRAM_HEADER_SIZE * uintptr(ehdr.Phnum))
 	buf.Grow(int(m))
 	n, err = buf.ReadFrom(r)
@@ -869,8 +865,6 @@ func readElfData(r io.ReadCloser, res chan elfReadResult) {
 		result.err = err
 		return
 	}
-
-	log.Println("read program headers")
 
 	phdrs := unsafe.Slice((*Elf64_Phdr)(unsafe.Pointer(&(buf.Bytes()[ehdr.Phoff]))), ehdr.Phnum)
 	var end uint
@@ -912,9 +906,6 @@ func readElfData(r io.ReadCloser, res chan elfReadResult) {
 	m = int(int(end) - len(buf.Bytes()))
 	buf.Grow(int(m))
 
-	log.Printf("elf size %#x\n", end)
-
-	log.Println("reading elf data")
 	n, err = buf.ReadFrom(r)
 	if n != int64(m) {
 		if err == nil {
@@ -925,24 +916,29 @@ func readElfData(r io.ReadCloser, res chan elfReadResult) {
 		return
 	}
 
-	log.Println("read elf data")
-
 	result.buf = buf.Bytes()
 }
 
-func (info *ElfLoadInfo) LoadElf() error {
-	log.Println("reading payload data")
-
+func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 	out := make(chan elfReadResult)
 
-	go readElfData(info.reader, out)
+	hen.wg.Add(1)
+	go readElfData(info.reader, out, &hen.wg)
 
-	// readElfData will close it
+	defer func() {
+		if info.tracer != nil {
+			info.tracer.Kill(false)
+		}
+		if info.pidChannel != nil && info.pid != -1 {
+			hen.monitoredPids <- info.pid
+		}
+	}()
+
+	// readElfData takes ownership
 	info.reader = nil
 
 	if info.tracer == nil {
 		if info.pidChannel != nil {
-			log.Println("waiting on ipc to detach")
 			info.pid = <-info.pidChannel
 		}
 		tracer, err := NewTracer(info.pid)
@@ -951,33 +947,24 @@ func (info *ElfLoadInfo) LoadElf() error {
 			return err
 		}
 		info.tracer = tracer
-		log.Println("elf loader acquired tracer")
 	}
 
 	data := <-out
 	if data.err != nil {
 		log.Println(data.err)
-		if info.tracer != nil {
-			info.tracer.Kill(false)
-		}
 		return data.err
 	}
+
 	if data.buf == nil {
 		log.Println("No elf data")
 	}
-	log.Println("elf data read")
 
-	log.Println("Getting kernel proc")
 	proc := GetProc(info.pid)
 	if proc == 0 {
 		return ErrProcNotFound
 	}
 
-	log.Println("Jailbreaking new process")
-
 	proc.Jailbreak(info.payload)
-
-	log.Println("Getting elf loader")
 
 	ldr, err := NewElfLoader(info.pid, info.tracer, data.buf, info.payload)
 	if err != nil {
@@ -988,7 +975,7 @@ func (info *ElfLoadInfo) LoadElf() error {
 	// the elf loader now has ownership of the tracer
 	info.tracer = nil
 
-	log.Println("Loading elf into new process")
+	defer ldr.Close()
 
 	return ldr.Run()
 }

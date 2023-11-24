@@ -109,6 +109,7 @@ func (hen *HenV) setPayloadInfo(num int, pid int, fds [2]int) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
 	*hen.payloads[num] = Payload{pid: pid, fds: fds}
+	log.Printf("payload %v registered for pid %v\n", num, pid)
 }
 
 func (hen *HenV) handlePayload(conn net.Conn, ldr chan<- ElfLoadInfo) error {
@@ -164,6 +165,12 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 			if err != nil {
 				log.Println(err)
 			}
+			proc := _getFirstProc()
+			for proc != 0 {
+				pid := proc.GetPid()
+				log.Printf("pid: %v\n", pid)
+				proc = proc.next()
+			}
 		}()
 	}
 }
@@ -194,7 +201,6 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 				log.Println(err)
 				continue
 			}
-			log.Println("payload connection accepted")
 			err = hen.handlePayload(conn, ldr)
 			if err != nil {
 				log.Println(err)

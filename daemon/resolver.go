@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"log"
 	"slices"
 	"unsafe"
 )
@@ -109,19 +110,22 @@ func (r *Resolver) AddLibraryMetaData(imagebase uintptr, meta SharedLibMetaData)
 	const size = unsafe.Sizeof(info)
 	_, err := KernelCopyoutUnsafe(uintptr(meta)+_INTERNAL_LIBRARY_METADATA_OFFSET, unsafe.Pointer(&info), int(size))
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 
 	symtabLength := info.symtabSize / unsafe.Sizeof(Elf64_Sym{})
 	symtab := make([]Elf64_Sym, int(symtabLength))
-	_, err = KernelCopyoutUnsafe(GetKernelBase()+info.symtab, unsafe.Pointer(&symtab[0]), int(info.symtabSize))
+	_, err = KernelCopyoutUnsafe(info.symtab, unsafe.Pointer(&symtab[0]), int(info.symtabSize))
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 
 	strtab := make([]byte, int(info.strtabSize))
-	_, err = KernelCopyout(GetKernelBase()+info.strtab, strtab)
+	_, err = KernelCopyout(info.strtab, strtab)
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 

@@ -22,11 +22,12 @@ var (
 )
 
 const (
-	_STACK_ALIGN       = 0x10
-	_PAGE_LENGTH       = 0x4000
-	_MMAP_TEXT_FLAGS   = syscall.MAP_FIXED | syscall.MAP_SHARED
-	_MMAP_DATA_FLAGS   = syscall.MAP_FIXED | syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE
-	_PAYLOAD_ARGS_SIZE = int(0x30)
+	_STACK_ALIGN           = 0x10
+	_PAGE_LENGTH           = 0x4000
+	_MMAP_TEXT_FLAGS       = syscall.MAP_FIXED | syscall.MAP_SHARED
+	_MMAP_DATA_FLAGS       = syscall.MAP_FIXED | syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE
+	_PAYLOAD_ARGS_SIZE     = int(0x30)
+	DLSYM_NID          Nid = "LwG8g3niqwA"
 )
 
 type ElfLoader struct {
@@ -646,7 +647,13 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 
 	dlsym := ldr.resolver.LookupSymbol("sceKernelDlsym")
 	if dlsym == 0 {
-		return 0, ErrNoDlSym
+		// edge case where the elf doesn't use libkernel
+		proc := ldr.getProc()
+		lib := proc.GetLib(LIBKERNEL_HANDLE)
+		dlsym = lib.GetAddress(DLSYM_NID)
+		if dlsym == 0 {
+			return 0, ErrNoDlSym
+		}
 	}
 
 	result := [6]uintptr{
@@ -673,7 +680,12 @@ func (ldr *ElfLoader) load() error {
 				log.Println(err)
 				return err
 			}
-			_, err = UserlandCopyin(ldr.pid, vaddr, ldr.elf.data[phdr.Offset:phdr.Filesz])
+			offset, err := ldr.toFileOffset(int(phdr.Offset))
+			if err != nil {
+				log.Println(err)
+				return err
+			}
+			_, err = UserlandCopyin(ldr.pid, vaddr, ldr.elf.data[offset:offset+int(phdr.Filesz)])
 			if err != nil {
 				log.Println(err)
 				return err

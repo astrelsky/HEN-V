@@ -82,10 +82,8 @@ static const Elf64_Phdr *get_text_header(elf_loader_t *self) {
 	const Elf64_Ehdr *const restrict elf = get_elf_header(self);
 	for (ssize_t i = 0; i < elf->e_phnum; i++) {
 		if (phdrs[i].p_flags & PF_X) {
-			if (phdrs[i].p_paddr <= elf->e_entry && (phdrs[i].p_paddr + phdrs[i].p_filesz) < elf->e_entry) {
-				self->text_index = i;
-				return phdrs + self->text_index;
-			}
+			self->text_index = i;
+			return phdrs + self->text_index;
 		}
 	}
 

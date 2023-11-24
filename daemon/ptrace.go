@@ -482,8 +482,8 @@ func (tracer *Tracer) Pipe() (filedes [2]int, err error) {
 		return
 	}
 
-	filedes[0] = int(binary.LittleEndian.Uint64(buf))
-	filedes[1] = int(binary.LittleEndian.Uint64(buf[8:]))
+	filedes[0] = int(binary.LittleEndian.Uint32(buf))
+	filedes[1] = int(binary.LittleEndian.Uint32(buf[4:]))
 	return
 }
 

@@ -116,7 +116,7 @@ func (hen *HenV) msgInterrupt() {
 func (hen *HenV) getPayloadFileDescriptors() []PollFd {
 	hen.payloadMtx.RLock()
 	defer hen.payloadMtx.RUnlock()
-	fds := []PollFd{}
+	fds := []PollFd{{fd: int32(hen.kqueue), events: POLLHUP | POLLRDNORM}}
 	for i := range hen.payloads {
 		if hen.payloads[i] != nil {
 			fd := hen.payloads[i].fds[0]
@@ -201,7 +201,11 @@ func (hen *HenV) pollPayloadMessages() error {
 		log.Println(err.Error())
 		return err
 	}
-	for i := range fds {
+	for i := range fds[1:] {
+		if (fds[i].revents & POLLHUP) != 0 {
+			log.Printf("payload with socket %v closed\n", fds[i].fd)
+			continue
+		}
 		if (fds[i].revents & POLLRDNORM) != 0 {
 			msg, err := readAppMessage(int(fds[i].fd))
 			if err != nil {

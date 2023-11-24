@@ -347,10 +347,7 @@ func (ldr *Elf) getTextHeader() (*Elf64_Phdr, error) {
 		return &ldr.phdrs[ldr.textIndex], nil
 	}
 
-	log.Println("Getting text header")
-
 	for i := range ldr.phdrs {
-		log.Printf("phdr %v %s\n", i, ldr.phdrs[i].Flags())
 		if (ldr.phdrs[i].Flags() & elf.PF_X) != 0 {
 			ldr.textIndex = i
 			return &ldr.phdrs[ldr.textIndex], nil

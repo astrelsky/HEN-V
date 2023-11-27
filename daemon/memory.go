@@ -64,6 +64,11 @@ func UserlandWrite32(pid int, dst uintptr, value uint32) (err error) {
 	return
 }
 
+func UserlandWrite8(pid int, dst uintptr, value uint8) (err error) {
+	_, err = UserlandCopyinUnsafe(pid, dst, unsafe.Pointer(&value), 1)
+	return
+}
+
 func UserlandRead64(pid int, src uintptr) (res uint64, err error) {
 	buf := make([]byte, 8)
 	_, err = UserlandCopyout(pid, src, buf)

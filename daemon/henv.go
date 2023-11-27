@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/signal"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -82,6 +84,7 @@ type HenV struct {
 	homebrewChannel  chan HomebrewLaunchInfo
 	elfChannel       chan ElfLoadInfo
 	msgChannel       chan *AppMessage
+	childChannel     chan os.Signal
 	payloads         PayloadFlag
 	cancel           context.CancelFunc
 }
@@ -137,12 +140,14 @@ func NewHenV() (HenV, context.Context) {
 		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
 		elfChannel:      make(chan ElfLoadInfo),        // unbuffered
 		msgChannel:      make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
+		childChannel:    make(chan os.Signal, CHANNEL_BUFFER_SIZE),
 		cancel:          cancel,
 	}, ctx
 }
 
 func (hen *HenV) Wait() {
 	hen.wg.Wait()
+	signal.Stop(hen.childChannel)
 }
 
 func (hen *HenV) Close() error {
@@ -158,9 +163,20 @@ func (hen *HenV) Close() error {
 	return nil
 }
 
+func childMonitor(wg *sync.WaitGroup, signals <-chan os.Signal) {
+	defer wg.Done()
+	for sig := range signals {
+		log.Printf("%s received", sig.String())
+	}
+}
+
 func (hen *HenV) Start(ctx context.Context) {
 	hen.wg.Add(7)
-	go hen.runProcessMonitor(ctx)
+
+	signal.Notify(hen.childChannel, syscall.SIGCHLD)
+
+	go childMonitor(&hen.wg, hen.childChannel)
+	//go hen.runProcessMonitor(ctx)
 	go hen.homebrewHandler(ctx)
 	go hen.prefixHandler(ctx)
 	go hen.launchListenerHandler(ctx)

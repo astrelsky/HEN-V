@@ -20,14 +20,13 @@ const (
 )
 
 var (
-	ErrProcessNotStopped = errors.New("process not stopped")
-	ErrProcessDied       = errors.New("process died")
-	ErrNoLibKernel       = errors.New("failed to get libkernel")
-	ErrNoEboot           = errors.New("failed to get eboot")
-	ErrNoUsleep          = errors.New("failed to find usleep")
-	ErrBadImageBase      = errors.New("invalid image base")
-	ErrCopyLoop          = errors.New("failed to copyin usleep loop")
-	ErrUnexpectedRip     = errors.New("unexpected rip value, something went wrong")
+	ErrProcessDied   = errors.New("process died")
+	ErrNoLibKernel   = errors.New("failed to get libkernel")
+	ErrNoEboot       = errors.New("failed to get eboot")
+	ErrNoUsleep      = errors.New("failed to find usleep")
+	ErrBadImageBase  = errors.New("invalid image base")
+	ErrCopyLoop      = errors.New("failed to copyin usleep loop")
+	ErrUnexpectedRip = errors.New("unexpected rip value, something went wrong")
 )
 
 const (
@@ -119,6 +118,8 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	}
 
 	for {
+		// FIXME: this should lock the os thread until it has replied so the go runtime cant evict it
+
 		var cmd IpcResult
 		const PACKET_SIZE = unsafe.Sizeof(cmd)
 		buf := unsafe.Slice((*byte)(unsafe.Pointer(&cmd)), PACKET_SIZE)

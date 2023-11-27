@@ -20,6 +20,7 @@ var (
 	ErrNoLoadModuleInternal       = errors.New("failed to resolve sceSysmoduleLoadModuleInternal")
 	ErrNoDlSym                    = errors.New("failed to resolve sceKernelDlsym")
 	ErrProcessNotReady            = errors.New("elf_start process is not ready (FS is 0)")
+	ErrNoSigaction                = errors.New("failed to resolve sigaction")
 )
 
 const (
@@ -929,9 +930,9 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 		if info.tracer != nil {
 			info.tracer.Kill(false)
 		}
-		if info.pidChannel != nil && info.pid != -1 {
+		/*if info.pidChannel != nil && info.pid != -1 {
 			hen.monitoredPids <- info.pid
-		}
+		}*/
 	}()
 
 	// readElfData takes ownership
@@ -941,11 +942,17 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 		if info.pidChannel != nil {
 			info.pid = <-info.pidChannel
 		}
+		child := GetProc(info.pid)
+		log.Printf("pid: %v\n", syscall.Getpid())
+		log.Printf("syscore pid: %v\n", syscall.Getppid())
+		log.Printf("syscore is reaper: %v\n", GetProc(syscall.Getppid()).IsReaper())
+		log.Printf("oppid: %v\n", child.GetOriginalParentPid())
 		tracer, err := NewTracer(info.pid)
 		if err != nil {
 			log.Println(err)
 			return err
 		}
+		log.Printf("oppid: %v\n", child.GetOriginalParentPid())
 		info.tracer = tracer
 	}
 
@@ -966,6 +973,77 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 
 	proc.Jailbreak(info.payload)
 
+	if info.payload {
+		lib := proc.GetLib(LIBKERNEL_HANDLE)
+		if lib == 0 {
+			log.Println(ErrNoLibKernel)
+			return ErrNoLibKernel
+		}
+		sigaction := lib.GetAddress("KiJEPEWRyUY")
+		if sigaction == 0 {
+			log.Println(ErrNoSigaction)
+			return ErrNoSigaction
+		}
+
+		// preserve the first int3 at the start of .text since it's used by Tracer::Call
+		// this will squash DT_INIT but it doesn't matter since it already ran
+		// this allows the use of direct syscalls which makes this much easier
+		target := lib.GetImageBase() + 1
+		_, err := UserlandCopyin(info.pid, target, sighandlerInit[:])
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		var regs Reg
+		err = info.tracer.GetRegisters(&regs)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		backup := regs
+		regs.Rdi = int64(sigaction)
+		regs.Rip = int64(target)
+
+		err = info.tracer.SetRegisters(&regs)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		err = info.tracer.Continue()
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		state, err := info.tracer.Wait(0)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		if !state.Stopped() {
+			log.Println(ErrProcessNotStopped)
+			return ErrProcessNotStopped
+		}
+
+		if state.Signal() != syscall.SIGTRAP {
+			err = fmt.Errorf("process received signal %s but SIGTRAP was expected\n", state.Signal().String())
+			log.Println(err)
+			return err
+		}
+
+		err = info.tracer.SetRegisters(&backup)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		log.Println("successfully setup default sighandler")
+	}
+
 	ldr, err := NewElfLoader(info.pid, info.tracer, data.buf, info.payload)
 	if err != nil {
 		log.Println(err)
@@ -977,5 +1055,24 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 
 	defer ldr.Close()
 
-	return ldr.Run()
+	err = ldr.Run()
+
+	/*if info.payload {
+		err2 := ldr.tracer.Reparent()
+		if err2 != nil {
+			log.Println(err2)
+		}
+	}*/
+	return err
+}
+
+// sighandler_init(sigaction_t sigaction, sighandler_t handler)
+var sighandlerInit = [...]byte{
+	0xe8, 0x00, 0x00, 0x00, 0x00, 0x5e, 0xe9, 0x1b, 0x00, 0x00, 0x00, 0x48, 0xc7, 0xc0, 0x14, 0x00,
+	0x00, 0x00, 0x0f, 0x05, 0x48, 0x89, 0xc7, 0xbe, 0x09, 0x00, 0x00, 0x00, 0x48, 0xc7, 0xc0, 0x25,
+	0x00, 0x00, 0x00, 0x0f, 0x05, 0xcc, 0x48, 0x83, 0xc6, 0x06, 0x49, 0x89, 0xfc, 0x48, 0x83, 0xec,
+	0x20, 0xc5, 0xf9, 0xef, 0xc0, 0xc5, 0xfa, 0x7f, 0x44, 0x24, 0x0c, 0x48, 0x89, 0x34, 0x24, 0xc7,
+	0x44, 0x24, 0x08, 0x00, 0x00, 0x00, 0x00, 0x41, 0xbe, 0x02, 0x00, 0x00, 0x00, 0x41, 0xff, 0xc6,
+	0x44, 0x89, 0xf7, 0x48, 0x89, 0xe6, 0x48, 0x31, 0xd2, 0x41, 0xff, 0xd4, 0x41, 0x83, 0xfe, 0x0c,
+	0x0f, 0x85, 0xe7, 0xff, 0xff, 0xff, 0xcc,
 }

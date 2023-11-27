@@ -14,53 +14,48 @@ import (
 const PAYLOAD_ADDRESS = ":9020"
 
 type LocalProcessArgs struct {
-	fds [2]int32
-	a   int32
-	b   int32
-	_   [2]uint64
+	_                 int32
+	fd                int32
+	enableCrashReport int32
+	userId            int32
+	_                 uint64
+	preloadPrxFlags   uint64
 }
 
 type LocalProcess struct {
-	num    int
-	writer net.Conn
-	reader net.Conn
-}
-
-func (p *LocalProcess) Close() (err error) {
-	if p.writer != nil {
-		err = p.writer.Close()
-		p.writer = nil
-	}
-	if p.reader != nil {
-		err = errors.Join(p.reader.Close())
-		p.reader = nil
-	}
-	return
-}
-
-func (lp *LocalProcess) Read(p []byte) (int, error) {
-	return lp.reader.Read(p)
-}
-
-func (lp *LocalProcess) Write(p []byte) (int, error) {
-	return lp.writer.Write(p)
+	net.Conn
+	num int
 }
 
 type ProcessSocket struct {
 	net.Conn
-	fp *os.File
-	fd int
+	fp      *os.File
+	fd      int
+	childFd int
 }
 
-func NewProcessSocket(fd int, name string) (s *ProcessSocket, err error) {
-	fp := os.NewFile(uintptr(fd), name)
+func NewProcessSocket(name string) (s *ProcessSocket, fd int, err error) {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	fd = fds[1]
+	fp := os.NewFile(uintptr(fds[0]), name)
 	conn, err := net.FileConn(fp)
 	if err != nil {
+		syscall.Close(fds[0])
+		syscall.Close(fds[1])
 		fp.Close()
 		log.Println(err)
 		return
 	}
-	s = &ProcessSocket{Conn: conn, fp: fp, fd: fd}
+	s = &ProcessSocket{
+		Conn:    conn,
+		fp:      fp,
+		fd:      fds[0],
+		childFd: fds[1],
+	}
 	return
 }
 
@@ -69,77 +64,28 @@ func (s *ProcessSocket) Close() (err error) {
 		err = s.Conn.Close()
 		err = errors.Join(err, s.fp.Close())
 		err = errors.Join(err, syscall.Close(s.fd))
+		err = errors.Join(err, syscall.Close(s.childFd))
 		s.fd = -1
 	}
 	return
 }
 
-func newLocalProcess(num int, fd0, fd1 *int32) (p *LocalProcess, err error) {
-	var writeFile *ProcessSocket
-	var readFile *ProcessSocket
-
-	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+func newLocalProcess(num int) (LocalProcess, int, error) {
+	s, fd, err := NewProcessSocket(fmt.Sprintf("payload%d-socket", num))
 	if err != nil {
 		log.Println(err)
-		return
+		return LocalProcess{}, -1, err
 	}
-
-	defer func() {
-		if err == nil {
-			return
-		}
-		if writeFile != nil {
-			writeFile.Close()
-		} else {
-			syscall.Close(fds[0])
-		}
-		if readFile != nil {
-			readFile.Close()
-		} else {
-			syscall.Close(fds[1])
-		}
-	}()
-
-	writeFile, err = NewProcessSocket(fds[0], fmt.Sprintf("payload%d-write-socket", num))
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	*fd0 = int32(fds[0])
-
-	readFile, err = NewProcessSocket(fds[1], fmt.Sprintf("payload%d-read-socket", num))
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	*fd1 = int32(fds[1])
-
-	p = &LocalProcess{num: num, writer: writeFile, reader: readFile}
-	writeFile = nil
-	readFile = nil
-	return
+	return LocalProcess{Conn: s, num: num}, fd, nil
 }
 
 func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err error) {
-	var p *LocalProcess
 	defer func() {
 		if err == nil {
 			return
 		}
 		hen.payloads.Clear(num)
-		if p != nil {
-			p.Close()
-		}
 	}()
-
-	param := &LocalProcessArgs{a: 1, b: -1}
-	p, err = newLocalProcess(num, &param.fds[0], &param.fds[1])
-
-	if err != nil {
-		log.Println(err)
-		return
-	}
 
 	status, err := SystemServiceGetAppStatus()
 	if err != nil {
@@ -151,6 +97,19 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 	go func() {
 		defer hen.wg.Done()
 
+		p, fd, err := newLocalProcess(num)
+
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		param := &LocalProcessArgs{
+			fd:                int32(fd),
+			enableCrashReport: 0,
+			userId:            -1,
+		}
+
 		argv := []uintptr{0}
 		path := []byte(fmt.Sprintf("/app0/payload%d.bin\x00", num))
 		res, _, _ := sceSystemServiceAddLocalProcess.Call(
@@ -159,12 +118,15 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 			uintptr(unsafe.Pointer(&argv[0])),
 			uintptr(unsafe.Pointer(param)),
 		)
+
 		if int(res) < 0 {
 			err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %v", int(res))
 			log.Println(err)
 			hen.payloads.Clear(num)
+			p.Close()
 			return
 		}
+
 		hen.wg.Add(1)
 		go hen.processPayloadMessages(p, ctx)
 	}()

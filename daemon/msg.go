@@ -102,9 +102,10 @@ func SceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, fla
 	return nil
 }
 
-func (hen *HenV) processPayloadMessages(p *LocalProcess, ctx context.Context) {
+func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 	defer hen.wg.Done()
 	defer p.Close()
+	defer hen.payloads.Clear(p.num)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -127,6 +128,7 @@ func (hen *HenV) processPayloadMessages(p *LocalProcess, ctx context.Context) {
 				log.Println(err)
 				return
 			}
+			log.Printf("received message from payload %v\n", p.num)
 			msg := &AppMessage{
 				sender:    emsg.sender,
 				msgType:   AppMessageType(emsg.msgType),

@@ -106,7 +106,10 @@ type Reg struct {
 	Ss     int64
 }
 
-var UnexpectedProcessStatusError error = fmt.Errorf("Unexpected process status")
+var (
+	UnexpectedProcessStatusError = errors.New("Unexpected process status")
+	ErrProcessNotStopped         = errors.New("process not stopped")
+)
 
 func NewTracer(pid int) (*Tracer, error) {
 	tracer := &Tracer{
@@ -135,6 +138,27 @@ func (tracer *Tracer) Detach() error {
 		tracer.pid = 0
 	}
 	return err
+}
+
+func (tracer *Tracer) Reparent() error {
+	// FFFFFFFC tree flags
+	// 0x00800 P_TRACED
+	log.Println("reparenting")
+	p := GetProc(tracer.pid)
+	if p == 0 {
+		return ErrNoProc
+	}
+	p.SetOriginalParentPid(uint32(syscall.Getpid()))
+	p.SetParentPtr(GetCurrentProc())
+	/*flags := p.TreeFlag()
+	p.SetTreeFlag(flags & 0xFFFFFFFC)
+	flags = p.GetFlag()
+	p.SetFlag(flags & 0xFFFFF7FF)
+	p.SetStops(0)*/
+
+	// we altered the flags as a detach
+	//tracer.pid = 0
+	return nil
 }
 
 func (tracer *Tracer) ptrace(request int, addr uintptr, data int) (err error) {
@@ -312,7 +336,7 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	state, err := tracer.Wait(0)
 
 	if !state.Stopped() {
-		return 0, errors.New("process not stopped")
+		return 0, ErrProcessNotStopped
 	}
 
 	if state.Signal() != syscall.SIGTRAP {

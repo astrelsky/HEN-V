@@ -71,10 +71,10 @@ const (
 )
 
 type Tracer struct {
-	syscallAddr    uintptr
-	libkernel_base uintptr
-	errno_addr     uintptr
-	pid            int
+	syscallAddr   uintptr
+	libkernelBase uintptr
+	errno_addr    uintptr
+	pid           int
 }
 
 type Reg struct {
@@ -113,10 +113,10 @@ var (
 
 func NewTracer(pid int) (*Tracer, error) {
 	tracer := &Tracer{
-		syscallAddr:    0,
-		libkernel_base: 0,
-		errno_addr:     0,
-		pid:            pid,
+		syscallAddr:   0,
+		libkernelBase: 0,
+		errno_addr:    0,
+		pid:           pid,
 	}
 
 	err := tracer.ptrace(PT_ATTACH, 0, 0)
@@ -138,27 +138,6 @@ func (tracer *Tracer) Detach() error {
 		tracer.pid = 0
 	}
 	return err
-}
-
-func (tracer *Tracer) Reparent() error {
-	// FFFFFFFC tree flags
-	// 0x00800 P_TRACED
-	log.Println("reparenting")
-	p := GetProc(tracer.pid)
-	if p == 0 {
-		return ErrNoProc
-	}
-	p.SetOriginalParentPid(uint32(syscall.Getpid()))
-	p.SetParentPtr(GetCurrentProc())
-	/*flags := p.TreeFlag()
-	p.SetTreeFlag(flags & 0xFFFFFFFC)
-	flags = p.GetFlag()
-	p.SetFlag(flags & 0xFFFFF7FF)
-	p.SetStops(0)*/
-
-	// we altered the flags as a detach
-	//tracer.pid = 0
-	return nil
 }
 
 func (tracer *Tracer) ptrace(request int, addr uintptr, data int) (err error) {
@@ -202,8 +181,9 @@ func (tracer *Tracer) Step() error {
 		return err
 	}
 	if !status.Stopped() {
-		return fmt.Errorf("unexpected process status %#08x", status)
-		//return UnexpectedProcessStatusError
+		err = fmt.Errorf("unexpected process status %#08x", status)
+		log.Println(err)
+		return err
 	}
 	return nil
 }
@@ -300,7 +280,7 @@ func (tracer *Tracer) Call(addr uintptr, a, b, c, d, e, f uintptr) (int, error) 
 }
 
 func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
-	if tracer.libkernel_base == 0 {
+	if tracer.libkernelBase == 0 {
 		proc := GetProc(tracer.pid)
 		if proc == 0 {
 			return 0, errors.New("failed to get traced proc")
@@ -309,8 +289,8 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 		if lib == 0 {
 			return 0, errors.New("failed to get libkernel for traced proc")
 		}
-		tracer.libkernel_base = lib.GetImageBase()
-		if tracer.libkernel_base == 0 {
+		tracer.libkernelBase = lib.GetImageBase()
+		if tracer.libkernelBase == 0 {
 			return 0, errors.New("failed to get libkernel base for traced proc")
 		}
 	}
@@ -324,7 +304,11 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	}
 
 	// set the return address to the `INT3` at the start of libkernel
-	UserlandWrite64(tracer.pid, tracer.libkernel_base, uint64(jmp.Rsp))
+	err = UserlandWrite64(tracer.pid, uintptr(jmp.Rsp), uint64(tracer.libkernelBase))
+	if err != nil {
+		log.Println(err)
+		return 0, err
+	}
 
 	// call the function
 	err = tracer.Continue()
@@ -336,11 +320,14 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	state, err := tracer.Wait(0)
 
 	if !state.Stopped() {
+		log.Println(ErrProcessNotStopped)
 		return 0, ErrProcessNotStopped
 	}
 
-	if state.Signal() != syscall.SIGTRAP {
-		return 0, fmt.Errorf("process received signal %s but SIGTRAP was expected\n", state.Signal().String())
+	if state.StopSignal() != syscall.SIGTRAP {
+		err = fmt.Errorf("process received signal %s but SIGTRAP was expected\n", state.StopSignal().String())
+		log.Println(err)
+		return 0, err
 	}
 
 	err = tracer.GetRegisters(jmp)
@@ -556,51 +543,4 @@ func (tracer *Tracer) Close(fd int) (int, error) {
 
 func (tracer *Tracer) Socket(domain int, socktype int, protocol int) (int, error) {
 	return tracer.Syscall(syscall.SYS_SOCKET, uintptr(domain), uintptr(socktype), uintptr(protocol), 0, 0, 0)
-}
-
-func (tracer *Tracer) Backtrace(name string) (err error) {
-	p := GetProc(tracer.pid)
-	if p == 0 {
-		log.Println("proc already died")
-		return
-	}
-	lib := p.GetLib(LIBKERNEL_HANDLE)
-	if lib == 0 {
-		log.Println("libkernel not found")
-		return
-	}
-	const BACKTRACE Nid = "rb8JKArrzc0"
-	addr := lib.GetAddress(BACKTRACE)
-	if addr == 0 {
-		log.Println("failed to get sceKernelPrintBacktraceWithModuleInfo")
-		return
-	}
-	var jmp Reg
-	err = tracer.GetRegisters(&jmp)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	backup := jmp
-	rsp := backup.Rsp - int64(len(name)+1)
-	jmp.Rsp = rsp
-	correctRsp(&jmp)
-
-	str, err := syscall.BytePtrFromString(name)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	_, err = UserlandCopyinUnsafe(tracer.pid, uintptr(rsp), unsafe.Pointer(str), len(name)+1)
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	jmp.Rdi = rsp
-	jmp.Rip = int64(addr)
-	_, err = tracer.startCall(&backup, &jmp)
-	return
 }

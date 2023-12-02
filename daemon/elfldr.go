@@ -23,6 +23,7 @@ var (
 	ErrProcessNotReady            = errors.New("elf_start process is not ready (FS is 0)")
 	ErrNoSigaction                = errors.New("failed to resolve sigaction")
 	ErrNoGetpid                   = errors.New("failed to resolve getpid")
+	ErrNoElfData                  = errors.New("No elf data")
 )
 
 const (
@@ -65,15 +66,7 @@ func NewElfLoader(pid int, tracer *Tracer, data []byte, payload bool) (ElfLoader
 }
 
 func (ldr *ElfLoader) toFileOffset(addr int) (int, error) {
-	text, err := ldr.getTextHeader()
-	if err != nil {
-		log.Println(err)
-		return 0, err
-	}
-	if Elf64_Addr(addr) >= text.Vaddr {
-		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset)), nil
-	}
-	return addr, nil
+	return ldr.elf.toFileOffset(addr)
 }
 
 func (ldr *ElfLoader) faddr(addr int) (unsafe.Pointer, error) {
@@ -281,6 +274,7 @@ func (ldr *ElfLoader) loadLibSysmodule() error {
 
 	meta := lib.GetMetaData()
 	imagebase := lib.GetImageBase()
+	log.Printf("sysmodule imagebase: %#08x\n", imagebase)
 	err := ldr.resolver.AddLibraryMetaData(imagebase, meta)
 	if err != nil {
 		log.Println(err)
@@ -296,6 +290,7 @@ func (ldr *ElfLoader) getString(i int) string {
 
 func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib string) (int, error) {
 	lib += ".sprx"
+	log.Println("loading lib " + lib)
 	id := syscall.GetInternalPrxId(lib)
 	if id != 0 {
 		res, err := ldr.tracer.Call(id_loader, id, 0, 0, 0, 0, 0)
@@ -304,7 +299,9 @@ func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib strin
 			return 0, err
 		}
 		if res == -1 {
-			return 0, fmt.Errorf("failed to load lib %s", lib)
+			err = fmt.Errorf("failed to load lib %s", lib)
+			log.Println(err)
+			return 0, err
 		}
 	} else {
 		_, err := UserlandCopyinUnsafe(ldr.pid, mem, unsafe.Pointer(&([]byte(lib)[0])), len(lib))
@@ -319,7 +316,9 @@ func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib strin
 			return 0, err
 		}
 		if res == -1 {
-			return 0, fmt.Errorf("failed to load lib %s", lib)
+			err = fmt.Errorf("failed to load lib %s", lib)
+			log.Println(err)
+			return 0, err
 		}
 	}
 	return GetModuleHandle(ldr.pid, lib), nil
@@ -370,23 +369,26 @@ func (ldr *ElfLoader) loadLibraries() error {
 			continue
 		}
 
+		var handle int
+
 		lib := ldr.getString(dyn.Value())
 		if strings.HasPrefix(lib, "libkernel") {
-			continue
-		}
-		if strings.HasPrefix(lib, "libc.") || strings.HasPrefix(lib, "libSceLibcInternal") {
-			continue
-		}
+			handle = LIBKERNEL_HANDLE
+		} else if strings.HasPrefix(lib, "libc.") || strings.HasPrefix(lib, "libSceLibcInternal") {
+			handle = LIBC_HANDLE
+		} else {
+			ext := strings.LastIndexByte(lib, '.')
+			if ext != -1 {
+				lib = lib[:ext]
+			}
 
-		ext := strings.LastIndexByte(lib, '.')
-		if ext != -1 {
-			lib = lib[:ext]
-		}
+			log.Printf("idLoader: %#08x, nameLoader: %#08x, mem: %#08x\n", idLoader, nameLoader, mem)
 
-		handle, err := ldr.loadLibrary(idLoader, nameLoader, uintptr(mem), lib)
-		if err != nil {
-			log.Println(err)
-			return err
+			handle, err = ldr.loadLibrary(idLoader, nameLoader, uintptr(mem), lib)
+			if err != nil {
+				log.Println(err)
+				return err
+			}
 		}
 
 		if handle < 0 {
@@ -678,6 +680,10 @@ func (ldr *ElfLoader) load() error {
 	for i := range phdrs {
 		phdr := &phdrs[i]
 		if isLoadable(phdr) {
+			if phdr.Filesz == 0 {
+				// bss
+				continue
+			}
 			vaddr, err := ldr.toVirtualAddress(uintptr(phdr.Paddr))
 			if err != nil {
 				log.Println(err)
@@ -772,11 +778,12 @@ func (ldr *ElfLoader) start(args uintptr) error {
 	regs.Rip = int64(rip)
 
 	if ldr.payload {
-		err = ldr.prepSighandler(&regs)
+		// FIXME: reenable this after test loading other elfs
+		/*err = ldr.prepSighandler(&regs)
 		if err != nil {
 			log.Println(err)
 			return err
-		}
+		}*/
 	}
 
 	err = ldr.tracer.SetRegisters(&regs)
@@ -939,12 +946,21 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 		if ehdr.Shoff > ehdr.Phoff {
 			log.Println("reading section headers")
 			m = int(ELF_SECTION_HEADER_SIZE * uintptr(ehdr.Shnum))
+			off := int(ehdr.Shoff) - len(buf.Bytes())
+			if off > 0 {
+				m += off
+			}
 			buf.Grow(int(m))
 			n, err = buf.ReadFrom(r)
 			if n != int64(m) {
 				if err == nil {
 					err = fmt.Errorf("only read %v out of %v bytes", n, m)
 				}
+				log.Println(err)
+				result.err = err
+				return
+			}
+			if err != nil {
 				log.Println(err)
 				result.err = err
 				return
@@ -962,6 +978,12 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 	}
 
 	m = int(int(end) - len(buf.Bytes()))
+	if m <= 0 {
+		// section headers can be at the end of the file
+		result.buf = buf.Bytes()
+		return
+	}
+
 	buf.Grow(int(m))
 
 	n, err = buf.ReadFrom(r)
@@ -999,17 +1021,11 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 		if info.pidChannel != nil {
 			info.pid = <-info.pidChannel
 		}
-		child := GetProc(info.pid)
-		log.Printf("pid: %v\n", syscall.Getpid())
-		log.Printf("syscore pid: %v\n", syscall.Getppid())
-		log.Printf("syscore is reaper: %v\n", GetProc(syscall.Getppid()).IsReaper())
-		log.Printf("oppid: %v\n", child.GetOriginalParentPid())
 		tracer, err := NewTracer(info.pid)
 		if err != nil {
 			log.Println(err)
 			return err
 		}
-		log.Printf("oppid: %v\n", child.GetOriginalParentPid())
 		info.tracer = tracer
 	}
 
@@ -1020,7 +1036,8 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 	}
 
 	if data.buf == nil {
-		log.Println("No elf data")
+		log.Println(ErrNoElfData)
+		return ErrNoElfData
 	}
 
 	proc := GetProc(info.pid)
@@ -1043,12 +1060,6 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 
 	err = ldr.Run()
 
-	/*if info.payload {
-		err2 := ldr.tracer.Reparent()
-		if err2 != nil {
-			log.Println(err2)
-		}
-	}*/
 	return err
 }
 

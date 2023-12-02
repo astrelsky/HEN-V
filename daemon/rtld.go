@@ -7,6 +7,7 @@ import (
 
 const (
 	LIBKERNEL_HANDLE             = 0x2001
+	LIBC_HANDLE                  = 2
 	_SHARED_LIB_IMAGEBASE_OFFSET = 0x30
 	_SHARED_LIB_METADATA_OFFSET  = 0x148
 	_SECTION_TYPE_TEXT           = 1

@@ -90,18 +90,23 @@ func (nid *NidKeyValue) String() string {
 	return string(unsafe.Slice(ptr, 11))
 }
 
-func (tbl *NidMap) insertNid(nid NidKeyValue) {
+func (tbl *NidMap) insertNid(sym Elf64_Sym, strtab []byte, i int32) {
+	name := strtab[sym.Name : sym.Name+12]
+	nid := NewNid(name, int32(i))
 	index := tbl.binarySearch(nid)
 	if index >= 0 {
-		panic(nid.String() + " already in NidMap")
+		// this is actually ok
+		return
 	}
 	*tbl = slices.Insert(*tbl, -(index + 1), nid)
 }
 
 func (tbl *SymbolLookupTable) fillLookupTable(symtab []Elf64_Sym, strtab []byte) {
 	for i := 1; i < len(symtab); i++ {
-		name := symtab[i].Name
-		tbl.symbols.insertNid(NewNid(strtab[name:name+12], int32(i)))
+		sym := symtab[i]
+		if sym.Exported() {
+			tbl.symbols.insertNid(sym, strtab, int32(i))
+		}
 	}
 }
 

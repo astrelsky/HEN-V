@@ -55,7 +55,7 @@ type AppMessage struct {
 type ExternalAppMessage struct {
 	sender      uint32
 	msgType     uint32
-	payloadSize uint64
+	payloadSize uint32
 	// payload     [INTERNAL_APP_MESSAGE_PAYLOAD_SIZE]byte
 }
 

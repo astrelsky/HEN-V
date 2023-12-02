@@ -111,7 +111,7 @@ type Elf struct {
 	dyntab    *Elf64_Dyn
 	hashtab   *ElfHashTable
 	gnuhash   *GnuHashTable
-	strtab    *uint8
+	dynstr    []byte
 	textIndex int
 }
 
@@ -179,8 +179,10 @@ func parseDynamicTable(ldr *Elf) error {
 	var symtabOffset int
 	var reltabSize int
 	var plttabSize int
+	var strtabSize int
 	var reltab unsafe.Pointer
 	var plttab unsafe.Pointer
+	var strtab unsafe.Pointer
 	for ; dyn.Tag() != elf.DT_NULL; dyn = dyn.Next() {
 		switch dyn.Tag() {
 		case elf.DT_RELA:
@@ -216,7 +218,9 @@ func parseDynamicTable(ldr *Elf) error {
 				log.Println(err)
 				return err
 			}
-			ldr.strtab = (*byte)(value)
+			strtab = value
+		case elf.DT_STRSZ:
+			strtabSize = dyn.Value()
 		case elf.DT_HASH:
 			value, err := ldr.faddr(dyn.Value())
 			if err != nil {
@@ -252,6 +256,10 @@ func parseDynamicTable(ldr *Elf) error {
 
 	if plttab != nil {
 		ldr.plttab = unsafe.Slice((*Elf64_Rela)(plttab), plttabSize)
+	}
+
+	if strtab != nil && strtabSize > 0 {
+		ldr.dynstr = unsafe.Slice((*byte)(strtab), strtabSize)
 	}
 
 	return nil
@@ -359,7 +367,6 @@ func (ldr *Elf) getTextHeader() (*Elf64_Phdr, error) {
 }
 
 func findDynamicTable(ldr *Elf) (*Elf64_Dyn, error) {
-
 	for i := range ldr.phdrs {
 		if ldr.phdrs[i].Type() == elf.PT_DYNAMIC {
 			return (*Elf64_Dyn)(ldr.getDataAt(int(ldr.phdrs[i].Offset))), nil
@@ -374,6 +381,9 @@ func (ldr *Elf) toFileOffset(addr int) (int, error) {
 	if err != nil {
 		log.Println(err)
 		return 0, err
+	}
+	if text.Vaddr == 0 {
+		return addr, nil
 	}
 	if Elf64_Addr(addr) >= text.Vaddr {
 		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset)), nil
@@ -391,10 +401,14 @@ func (ldr *Elf) faddr(addr int) (unsafe.Pointer, error) {
 }
 
 func (ldr *Elf) getString(i int) string {
-	index := bytes.IndexByte(ldr.data[i:], 0)
+	index := bytes.IndexByte(ldr.dynstr[i:], 0)
 	if index == -1 {
-		log.Printf("missing null terminator at %#08x\n", i)
 		return ""
 	}
-	return string(ldr.data[i : i+index])
+	return string(ldr.dynstr[i : i+index])
+}
+
+func (sym *Elf64_Sym) Exported() bool {
+	const EXPORT_MASK = 0x30
+	return ((sym.Info & EXPORT_MASK) != 0) && (sym.Shndx != 0)
 }

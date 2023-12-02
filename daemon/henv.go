@@ -306,11 +306,6 @@ func procWait(wg *sync.WaitGroup, pid int) {
 
 			if sig == syscall.SIGILL || sig == syscall.SIGSEGV {
 				// TODO: print backtrace and then kill
-				err = tracer.Backtrace("payload")
-				if err != nil {
-					log.Println(err)
-					return
-				}
 
 				tracer.Close(3)
 				return

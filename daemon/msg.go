@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 )
@@ -33,6 +34,7 @@ const (
 	BREW_MSG_TYPE_UNREGISTER_LAUNCH_LISTENER AppMessageType = 0x1000003
 	BREW_MSG_TYPE_APP_LAUNCHED               AppMessageType = 0x1000004
 	BREW_MSG_TYPE_KILL                       AppMessageType = 0x1000005
+	BREW_MSG_TYPE_GET_PAYLOAD_NUMBER         AppMessageType = 0x1000006
 )
 
 type AppLaunchedMessage struct {
@@ -56,7 +58,8 @@ type ExternalAppMessage struct {
 	sender      uint32
 	msgType     uint32
 	payloadSize uint32
-	// payload     [INTERNAL_APP_MESSAGE_PAYLOAD_SIZE]byte
+	//payload   [INTERNAL_APP_MESSAGE_PAYLOAD_SIZE]byte
+	//timestamp uint64
 }
 
 var internalMessageBuffer InternalAppMessage
@@ -104,11 +107,12 @@ func SceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, fla
 
 func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 	defer hen.wg.Done()
-	defer p.Close()
-	defer hen.payloads.Clear(p.num)
+	defer hen.ClosePayload(p.num)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	defer log.Printf("finished processing messages for payload %v\n", p.num)
 
 	done := ctx.Done()
 	for {
@@ -120,6 +124,10 @@ func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 			const length = unsafe.Sizeof(emsg)
 			buf := unsafe.Slice((*byte)(unsafe.Pointer(&emsg)), length)
 			n, err := p.Read(buf)
+			if n == 0 {
+				// connection closed
+				return
+			}
 			if n < int(length) {
 				log.Printf("only read %v out of %v bytes\n", n, length)
 				return
@@ -129,12 +137,48 @@ func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 				return
 			}
 			log.Printf("received message from payload %v\n", p.num)
+			if AppMessageType(emsg.msgType) == BREW_MSG_TYPE_GET_PAYLOAD_NUMBER {
+				emsg = ExternalAppMessage{
+					sender:      uint32(syscall.Getpid()),
+					msgType:     uint32(BREW_MSG_TYPE_GET_PAYLOAD_NUMBER),
+					payloadSize: 2,
+				}
+				n, err = p.Write(unsafe.Slice((*byte)(unsafe.Pointer(&emsg)), length))
+				if n < int(length) {
+					log.Printf("only wrote %v out of %v bytes\n", n, length)
+					return
+				}
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				num := uint16(p.num)
+				n, err = p.Write(unsafe.Slice((*byte)(unsafe.Pointer(&num)), 2))
+				if n < 2 {
+					log.Printf("only wrote %v out of %v bytes\n", n, 2)
+					return
+				}
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				continue
+			}
 			msg := &AppMessage{
 				sender:    emsg.sender,
 				msgType:   AppMessageType(emsg.msgType),
 				payload:   make([]byte, emsg.payloadSize),
 				timestamp: time.Now(),
 				rw:        p,
+			}
+			n, err = p.Read(msg.payload)
+			if n < int(emsg.payloadSize) {
+				log.Printf("only read %v out of %v bytes\n", n, emsg.payloadSize)
+				return
+			}
+			if err != nil {
+				log.Println(err)
+				return
 			}
 			hen.msgChannel <- msg
 		}

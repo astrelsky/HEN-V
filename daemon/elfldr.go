@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -24,6 +23,12 @@ var (
 	ErrNoSigaction                = errors.New("failed to resolve sigaction")
 	ErrNoGetpid                   = errors.New("failed to resolve getpid")
 	ErrNoElfData                  = errors.New("No elf data")
+	ErrTracerMmap                 = errors.New("load_libraries Tracer.Mmap")
+	ErrNullSock                   = errors.New("sock == 0")
+	ErrNullMasterPcb              = errors.New("master pcb == 0")
+	ErrNullMasterOutputOpts       = errors.New("master_inp6_outputopts == 0")
+	ErrNullVictimPcb              = errors.New("victim pcb == 0")
+	ErrNullVictimOutputOpts       = errors.New("victim_inp6_outputopts == 0")
 )
 
 const (
@@ -274,7 +279,6 @@ func (ldr *ElfLoader) loadLibSysmodule() error {
 
 	meta := lib.GetMetaData()
 	imagebase := lib.GetImageBase()
-	log.Printf("sysmodule imagebase: %#08x\n", imagebase)
 	err := ldr.resolver.AddLibraryMetaData(imagebase, meta)
 	if err != nil {
 		log.Println(err)
@@ -290,7 +294,6 @@ func (ldr *ElfLoader) getString(i int) string {
 
 func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib string) (int, error) {
 	lib += ".sprx"
-	log.Println("loading lib " + lib)
 	id := syscall.GetInternalPrxId(lib)
 	if id != 0 {
 		res, err := ldr.tracer.Call(id_loader, id, 0, 0, 0, 0, 0)
@@ -357,7 +360,8 @@ func (ldr *ElfLoader) loadLibraries() error {
 	}
 
 	if mem == -1 {
-		return errors.New("load_libraries Tracer.Mmap")
+		log.Println(ErrTracerMmap)
+		return ErrTracerMmap
 	}
 
 	defer ldr.tracer.Munmap(uintptr(mem), _PAGE_LENGTH)
@@ -381,8 +385,6 @@ func (ldr *ElfLoader) loadLibraries() error {
 			if ext != -1 {
 				lib = lib[:ext]
 			}
-
-			log.Printf("idLoader: %#08x, nameLoader: %#08x, mem: %#08x\n", idLoader, nameLoader, mem)
 
 			handle, err = ldr.loadLibrary(idLoader, nameLoader, uintptr(mem), lib)
 			if err != nil {
@@ -527,26 +529,31 @@ func createReadWriteSockets(proc KProc, sockets [2]int) error {
 	newtbl := proc.GetFd().GetFdTbl()
 	sock := uintptr(newtbl.GetFileData(sockets[0]))
 	if sock == 0 {
-		return errors.New("sock == 0")
+		log.Println(ErrNullSock)
+		return ErrNullSock
 	}
 	kwrite32(sock, 0x100)
 	pcb := uintptr(kread64(sock + 0x18))
 	if pcb == 0 {
-		return errors.New("master pcb == 0")
+		log.Println(ErrNullMasterPcb)
+		return ErrNullMasterPcb
 	}
 	master_inp6_outputopts := uintptr(kread64(pcb + 0x120))
 	if master_inp6_outputopts == 0 {
-		return errors.New("master_inp6_outputopts == 0")
+		log.Println(ErrNullMasterOutputOpts)
+		return ErrNullMasterOutputOpts
 	}
 	sock = uintptr(newtbl.GetFileData(sockets[1]))
 	kwrite32(sock, 0x100)
 	pcb = uintptr(kread64(sock + 0x18))
 	if pcb == 0 {
-		return errors.New("victim pcb == 0")
+		log.Println(ErrNullVictimPcb)
+		return ErrNullVictimPcb
 	}
 	victim_inp6_outputopts := kread64(pcb + 0x120)
 	if victim_inp6_outputopts == 0 {
-		return errors.New("victim_inp6_outputopts == 0")
+		log.Println(ErrNullVictimOutputOpts)
+		return ErrNullVictimOutputOpts
 	}
 	kwrite64(master_inp6_outputopts+0x10, victim_inp6_outputopts+0x10)
 	kwrite32(master_inp6_outputopts+0xc0, 0x13370000)
@@ -779,11 +786,11 @@ func (ldr *ElfLoader) start(args uintptr) error {
 
 	if ldr.payload {
 		// FIXME: reenable this after test loading other elfs
-		/*err = ldr.prepSighandler(&regs)
+		err = ldr.prepSighandler(&regs)
 		if err != nil {
 			log.Println(err)
 			return err
-		}*/
+		}
 	}
 
 	err = ldr.tracer.SetRegisters(&regs)
@@ -863,23 +870,13 @@ func (info *ElfLoadInfo) Close() (err error) {
 	return
 }
 
-func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
-	defer wg.Done()
+func readElfData(r io.ReadCloser) (data []byte, err error) {
+
 	defer r.Close()
-
-	var result elfReadResult
-
-	defer func() {
-		res <- result
-		close(res)
-	}()
 
 	_, ok := r.(*os.File)
 	if ok {
-		data, err := io.ReadAll(r)
-		result.buf = data
-		result.err = err
-		return
+		return io.ReadAll(r)
 	}
 
 	buf := ByteBuilder{}
@@ -895,13 +892,12 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 			err = fmt.Errorf("only read %v out of %v bytes", n, ELF_HEADER_SIZE)
 		}
 		log.Println(err)
-		result.err = err
 		return
 	}
 
-	result.err = checkElf(buf.Bytes())
-	if result.err != nil {
-		log.Println(result.err)
+	err = checkElf(buf.Bytes())
+	if err != nil {
+		log.Println(err)
 		return
 	}
 
@@ -914,7 +910,6 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 				err = fmt.Errorf("only read %v out of %v bytes", n, m)
 			}
 			log.Println(err)
-			result.err = err
 			return
 		}
 	}
@@ -927,7 +922,6 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 			err = fmt.Errorf("only read %v out of %v bytes", n, m)
 		}
 		log.Println(err)
-		result.err = err
 		return
 	}
 
@@ -957,12 +951,10 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 					err = fmt.Errorf("only read %v out of %v bytes", n, m)
 				}
 				log.Println(err)
-				result.err = err
 				return
 			}
 			if err != nil {
 				log.Println(err)
-				result.err = err
 				return
 			}
 		}
@@ -980,11 +972,13 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 	m = int(int(end) - len(buf.Bytes()))
 	if m <= 0 {
 		// section headers can be at the end of the file
-		result.buf = buf.Bytes()
+		data = buf.Bytes()
 		return
 	}
 
 	buf.Grow(int(m))
+
+	log.Println("reading remaining elf data")
 
 	n, err = buf.ReadFrom(r)
 	if n != int64(m) {
@@ -992,50 +986,44 @@ func readElfData(r io.ReadCloser, res chan elfReadResult, wg *sync.WaitGroup) {
 			err = fmt.Errorf("only read %v out of %v bytes", n, m)
 		}
 		log.Println(err)
-		result.err = err
 		return
 	}
 
-	result.buf = buf.Bytes()
+	data = buf.Bytes()
+	return
 }
 
 func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
-	out := make(chan elfReadResult)
-
-	hen.wg.Add(1)
-	go readElfData(info.reader, out, &hen.wg)
-
-	defer func() {
-		if info.tracer != nil {
-			info.tracer.Kill(false)
-		}
-		/*if info.pidChannel != nil && info.pid != -1 {
-			hen.monitoredPids <- info.pid
-		}*/
-	}()
-
-	// readElfData takes ownership
-	info.reader = nil
+	defer info.Close()
 
 	if info.tracer == nil {
 		if info.pidChannel != nil {
 			info.pid = <-info.pidChannel
+			if info.pid == -1 {
+				// sceSystemServiceAddLocalProcess failed
+				return nil
+			}
 		}
 		tracer, err := NewTracer(info.pid)
 		if err != nil {
 			log.Println(err)
+			info.reader.Close()
 			return err
 		}
 		info.tracer = tracer
 	}
 
-	data := <-out
-	if data.err != nil {
-		log.Println(data.err)
-		return data.err
+	buf, err := readElfData(info.reader)
+
+	// readElfData takes ownership
+	info.reader = nil
+
+	if err != nil {
+		log.Println(err)
+		return err
 	}
 
-	if data.buf == nil {
+	if buf == nil {
 		log.Println(ErrNoElfData)
 		return ErrNoElfData
 	}
@@ -1045,9 +1033,9 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 		return ErrProcNotFound
 	}
 
-	proc.Jailbreak(info.payload)
+	proc.Jailbreak(info.payload >= 0)
 
-	ldr, err := NewElfLoader(info.pid, info.tracer, data.buf, info.payload)
+	ldr, err := NewElfLoader(info.pid, info.tracer, buf, info.payload >= 0)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -1058,9 +1046,7 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 
 	defer ldr.Close()
 
-	err = ldr.Run()
-
-	return err
+	return ldr.Run()
 }
 
 // typedef int (*sigaction_t)(int sig, const struct sigaction *act, struct sigaction *oact);

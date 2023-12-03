@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/signal"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -56,17 +55,12 @@ type ElfLoadInfo struct {
 	pidChannel chan int
 	pid        int
 	tracer     *Tracer
-	payload    bool
-}
-
-type PayloadFlag struct {
-	mtx   sync.Mutex
-	value uint16
+	payload    int
 }
 
 type Payload struct {
-	pid int
-	fds [2]int
+	proc LocalProcess
+	pid  int
 }
 
 type HenV struct {
@@ -74,7 +68,7 @@ type HenV struct {
 	listenerMtx      sync.RWMutex
 	prefixHandlerMtx sync.RWMutex
 	pidMtx           sync.RWMutex
-	payloadMtx       sync.RWMutex
+	payloadMtx       sync.Mutex
 	prefixHandlers   map[string]AppLaunchPrefixHandler
 	launchListeners  []AppLaunchListener
 	monitoredPids    chan int
@@ -84,8 +78,7 @@ type HenV struct {
 	homebrewChannel  chan HomebrewLaunchInfo
 	elfChannel       chan ElfLoadInfo
 	msgChannel       chan *AppMessage
-	childChannel     chan os.Signal
-	payloads         PayloadFlag
+	payloads         [15]Payload
 	cancel           context.CancelFunc
 }
 
@@ -101,32 +94,74 @@ type AppLaunchPrefixHandler struct {
 	id     uint32
 }
 
-func (f *PayloadFlag) Set(i int) {
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-	f.value |= 1 << i
+func (p *Payload) Close() error {
+	p.pid = -1
+	return p.proc.Close()
 }
 
-func (f *PayloadFlag) Clear(i int) {
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-	f.value &= ^(1 << i)
+func (p *Payload) IsAlive() bool {
+	if p.pid == -1 {
+		return false
+	}
+	return syscall.Kill(p.pid, 0) == nil
 }
 
-func (f *PayloadFlag) Next() (n int, err error) {
-	f.mtx.Lock()
-	defer f.mtx.Unlock()
-	for i := 0; i <= MAX_PAYLOADS; i++ {
-		var mask uint16 = 1 << i
-		if (f.value & mask) == 0 {
-			n = i
-			f.value |= mask
-			return
+func (p *Payload) Kill() error {
+	if p.pid <= 0 {
+		return nil
+	}
+	return syscall.Kill(p.pid, syscall.SIGKILL)
+}
+
+func (hen *HenV) ClosePayload(num int) (err error) {
+	hen.payloadMtx.Lock()
+	defer hen.payloadMtx.Unlock()
+	p := &hen.payloads[num]
+	if p.pid > 0 {
+		if p.IsAlive() {
+			p.Kill()
+		}
+		err = p.Close()
+	} else if p.pid == 0 {
+		p.pid = -1
+	}
+	return
+}
+
+func (hen *HenV) setPayloadPid(num, pid int) {
+	hen.payloadMtx.Lock()
+	defer hen.payloadMtx.Unlock()
+	hen.payloads[num].pid = pid
+}
+
+func (hen *HenV) setPayloadProcess(num int, proc LocalProcess) {
+	hen.payloadMtx.Lock()
+	defer hen.payloadMtx.Unlock()
+	hen.payloads[num].proc = proc
+}
+
+func (hen *HenV) checkPayloads() {
+	for i := range hen.payloads {
+		p := &hen.payloads[i]
+		if p.pid > 0 {
+			if !p.IsAlive() {
+				p.Close()
+			}
 		}
 	}
-	err = ErrTooManyPayloads
-	log.Println(err)
-	return
+}
+
+func (hen *HenV) NextPayload() (int, error) {
+	hen.payloadMtx.Lock()
+	defer hen.payloadMtx.Unlock()
+	hen.checkPayloads()
+	for i := range hen.payloads {
+		if hen.payloads[i].pid < 0 {
+			hen.payloads[i].pid = 0
+			return i, nil
+		}
+	}
+	return -1, ErrTooManyPayloads
 }
 
 func NewHenV() (HenV, context.Context) {
@@ -140,14 +175,12 @@ func NewHenV() (HenV, context.Context) {
 		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
 		elfChannel:      make(chan ElfLoadInfo),        // unbuffered
 		msgChannel:      make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
-		childChannel:    make(chan os.Signal, CHANNEL_BUFFER_SIZE),
 		cancel:          cancel,
 	}, ctx
 }
 
 func (hen *HenV) Wait() {
 	hen.wg.Wait()
-	signal.Stop(hen.childChannel)
 }
 
 func (hen *HenV) Close() error {
@@ -173,9 +206,10 @@ func childMonitor(wg *sync.WaitGroup, signals <-chan os.Signal) {
 func (hen *HenV) Start(ctx context.Context) {
 	hen.wg.Add(7)
 
-	signal.Notify(hen.childChannel, syscall.SIGCHLD)
+	for i := range hen.payloads {
+		hen.payloads[i].pid = -1
+	}
 
-	go childMonitor(&hen.wg, hen.childChannel)
 	//go hen.runProcessMonitor(ctx)
 	go hen.homebrewHandler(ctx)
 	go hen.prefixHandler(ctx)

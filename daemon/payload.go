@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -28,6 +29,7 @@ type LocalProcess struct {
 }
 
 type ProcessSocket struct {
+	mtx sync.Mutex
 	net.Conn
 	fp      *os.File
 	fd      int
@@ -59,8 +61,23 @@ func NewProcessSocket(name string) (s *ProcessSocket, fd int, err error) {
 	return
 }
 
+func (s *ProcessSocket) closeUnneeded() {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	s.fp.Close()
+	syscall.Close(s.fd)
+	syscall.Close(s.childFd)
+	s.fd = 0
+
+}
+
 func (s *ProcessSocket) Close() (err error) {
-	if s.fd != -1 {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	if s.fd > 0 {
+		err = s.Conn.Close()
+		s.fd = -1
+	} else if s.fd == 0 {
 		err = s.Conn.Close()
 		err = errors.Join(err, s.fp.Close())
 		err = errors.Join(err, syscall.Close(s.fd))
@@ -84,7 +101,7 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 		if err == nil {
 			return
 		}
-		hen.payloads.Clear(num)
+		hen.ClosePayload(num)
 	}()
 
 	status, err := SystemServiceGetAppStatus()
@@ -104,6 +121,8 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 			return
 		}
 
+		hen.setPayloadProcess(num, p)
+
 		param := &LocalProcessArgs{
 			fd:                int32(fd),
 			enableCrashReport: 0,
@@ -119,29 +138,33 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 			uintptr(unsafe.Pointer(param)),
 		)
 
-		if int(res) < 0 {
-			err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %v", int(res))
+		if uint32(res) == uint32(0x80AA0008) {
+			// we need to push an invalid value so that the elf loader will stop blocking
+			hen.payloadChannel <- -1
+			err = ErrTooManyPayloads
 			log.Println(err)
-			hen.payloads.Clear(num)
-			p.Close()
+			return
+		}
+
+		if int32(res) < 0 {
+			err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %#x", int32(res))
+			// we need to push an invalid value so that the elf loader will stop blocking
+			hen.payloadChannel <- -1
+			log.Println(err)
 			return
 		}
 
 		hen.wg.Add(1)
+		p.Conn.(*ProcessSocket).closeUnneeded()
 		go hen.processPayloadMessages(p, ctx)
 	}()
 
 	return
 }
 
-func (hen *HenV) handlePayload(ctx context.Context) error {
-	num, err := hen.payloads.Next()
-	if err != nil {
-		log.Println(err)
-		return err
-	}
+func (hen *HenV) handlePayload(num int, ctx context.Context) error {
 
-	err = SystemServiceAddLocalProcess(num, hen, ctx)
+	err := SystemServiceAddLocalProcess(num, hen, ctx)
 	if err != nil {
 		log.Println(err)
 		return err
@@ -158,7 +181,9 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 			err := info.LoadElf(hen)
 			if err != nil {
 				log.Println(err)
+				return
 			}
+			hen.setPayloadPid(info.payload, info.pid)
 		}()
 	}
 }
@@ -197,14 +222,20 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 				continue
 			}
 
+			num, err := hen.NextPayload()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
 			ldr <- ElfLoadInfo{
 				pidChannel: hen.payloadChannel,
 				pid:        -1,
 				reader:     conn,
-				payload:    true,
+				payload:    num,
 			}
 
-			err = hen.handlePayload(ctx)
+			err = hen.handlePayload(num, ctx)
 			if err != nil {
 				log.Println(err)
 				conn.Close()

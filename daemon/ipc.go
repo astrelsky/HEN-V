@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -116,6 +117,10 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 		}
 		return cn
 	}
+
+	// this goroutine may no longer be evicted
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	for {
 		// FIXME: this should lock the os thread until it has replied so the go runtime cant evict it
@@ -379,7 +384,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 			pid:     tracer.pid,
 			tracer:  nil, // detach and reattach
 			reader:  fp,
-			payload: false,
+			payload: -1,
 		}
 	}
 

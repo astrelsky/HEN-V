@@ -132,6 +132,7 @@ func (hen *HenV) setPayloadPid(num, pid int) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
 	hen.payloads[num].pid = pid
+	hen.monitoredPids <- pid
 }
 
 func (hen *HenV) setPayloadProcess(num int, proc LocalProcess) {
@@ -154,7 +155,7 @@ func (hen *HenV) checkPayloads() {
 func (hen *HenV) NextPayload() (int, error) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
-	hen.checkPayloads()
+	//hen.checkPayloads()
 	for i := range hen.payloads {
 		if hen.payloads[i].pid < 0 {
 			hen.payloads[i].pid = 0
@@ -168,8 +169,8 @@ func NewHenV() (HenV, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return HenV{
 		launchListeners: []AppLaunchListener{},
-		monitoredPids:   make(chan int), // unbuffered
-		payloadChannel:  make(chan int), // unbuffered
+		monitoredPids:   make(chan int, CHANNEL_BUFFER_SIZE), // unbuffered
+		payloadChannel:  make(chan int),                      // unbuffered
 		listenerChannel: make(chan int32, CHANNEL_BUFFER_SIZE),
 		prefixChannel:   make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
 		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
@@ -204,7 +205,7 @@ func childMonitor(wg *sync.WaitGroup, signals <-chan os.Signal) {
 }
 
 func (hen *HenV) Start(ctx context.Context) {
-	hen.wg.Add(7)
+	hen.wg.Add(6)
 
 	for i := range hen.payloads {
 		hen.payloads[i].pid = -1
@@ -354,25 +355,6 @@ func procWait(wg *sync.WaitGroup, pid int) {
 			}
 		} else {
 			log.Println("wait returned for no reason?")
-		}
-	}
-}
-
-func (hen *HenV) runProcessMonitor(ctx context.Context) {
-	defer hen.wg.Done()
-	log.Println("process monitor started")
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	done := ctx.Done()
-
-	for {
-		select {
-		case <-done:
-			return
-		case pid := <-hen.monitoredPids:
-			hen.wg.Add(1)
-			go procWait(&hen.wg, pid)
 		}
 	}
 }

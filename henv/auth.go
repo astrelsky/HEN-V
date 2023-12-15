@@ -1,4 +1,4 @@
-package main
+package henv
 
 const (
 	DEBUGGER_AUTHID  uint64 = 0x4800000000000006

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"henv"
 	"log"
 	"syscall"
 	"unsafe"
@@ -12,7 +13,7 @@ func init() {
 }
 
 func enableVerboseSyscoreLogging() {
-	syscore := GetSyscoreProc()
+	syscore := henv.GetSyscoreProc()
 	if syscore == 0 {
 		log.Println("failed to get syscore kernel process")
 		return
@@ -27,23 +28,23 @@ func enableVerboseSyscoreLogging() {
 		log.Println("failed to get syscore imagebase")
 		return
 	}
-	err := UserlandWrite8(syscall.Getppid(), imagebase+0x684691, 1)
+	err := henv.UserlandWrite8(syscall.Getppid(), imagebase+0x684691, 1)
 	if err != nil {
 		log.Println("failed to enable syscore verbose logging")
 	}
-	err = UserlandWrite8(syscall.Getppid(), imagebase+0x684692, 1)
+	err = henv.UserlandWrite8(syscall.Getppid(), imagebase+0x684692, 1)
 	if err != nil {
 		log.Println("failed to enable syscore verbose logging")
 	}
-	err = UserlandWrite8(syscall.Getppid(), imagebase+0x684693, 1)
+	err = henv.UserlandWrite8(syscall.Getppid(), imagebase+0x684693, 1)
 	if err != nil {
 		log.Println("failed to enable syscore verbose logging")
 	}
-	err = UserlandWrite8(syscall.Getppid(), imagebase+0x684694, 1)
+	err = henv.UserlandWrite8(syscall.Getppid(), imagebase+0x684694, 1)
 	if err != nil {
 		log.Println("failed to enable syscore verbose logging")
 	}
-	err = UserlandWrite8(syscall.Getppid(), imagebase+0x684695, 0) // this one is a lock
+	err = henv.UserlandWrite8(syscall.Getppid(), imagebase+0x684695, 0) // this one is a lock
 	if err != nil {
 		log.Println("failed to enable syscore verbose logging")
 	}
@@ -62,7 +63,7 @@ func changeCoredumpMode() {
 func main() {
 	enableVerboseSyscoreLogging()
 	changeCoredumpMode()
-	hen, ctx := NewHenV()
+	hen, ctx := henv.NewHenV()
 	hen.Start(ctx)
 	hen.Wait()
 }

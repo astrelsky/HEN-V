@@ -1,4 +1,4 @@
-package main
+package henv
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -71,7 +70,6 @@ type HenV struct {
 	payloadMtx       sync.Mutex
 	prefixHandlers   map[string]AppLaunchPrefixHandler
 	launchListeners  []AppLaunchListener
-	monitoredPids    chan int
 	payloadChannel   chan int
 	listenerChannel  chan int32
 	prefixChannel    chan LaunchedAppInfo
@@ -132,7 +130,6 @@ func (hen *HenV) setPayloadPid(num, pid int) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
 	hen.payloads[num].pid = pid
-	hen.monitoredPids <- pid
 }
 
 func (hen *HenV) setPayloadProcess(num int, proc LocalProcess) {
@@ -169,8 +166,7 @@ func NewHenV() (HenV, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return HenV{
 		launchListeners: []AppLaunchListener{},
-		monitoredPids:   make(chan int, CHANNEL_BUFFER_SIZE), // unbuffered
-		payloadChannel:  make(chan int),                      // unbuffered
+		payloadChannel:  make(chan int), // unbuffered
 		listenerChannel: make(chan int32, CHANNEL_BUFFER_SIZE),
 		prefixChannel:   make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
 		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
@@ -187,7 +183,6 @@ func (hen *HenV) Wait() {
 func (hen *HenV) Close() error {
 	log.Println("NO MORE HOMEBREW FOR YOU!")
 	hen.cancel()
-	close(hen.monitoredPids)
 	close(hen.payloadChannel)
 	close(hen.listenerChannel)
 	close(hen.prefixChannel)
@@ -197,13 +192,6 @@ func (hen *HenV) Close() error {
 	return nil
 }
 
-func childMonitor(wg *sync.WaitGroup, signals <-chan os.Signal) {
-	defer wg.Done()
-	for sig := range signals {
-		log.Printf("%s received", sig.String())
-	}
-}
-
 func (hen *HenV) Start(ctx context.Context) {
 	hen.wg.Add(6)
 
@@ -211,7 +199,6 @@ func (hen *HenV) Start(ctx context.Context) {
 		hen.payloads[i].pid = -1
 	}
 
-	//go hen.runProcessMonitor(ctx)
 	go hen.homebrewHandler(ctx)
 	go hen.prefixHandler(ctx)
 	go hen.launchListenerHandler(ctx)

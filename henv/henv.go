@@ -62,6 +62,23 @@ type Payload struct {
 	pid  int
 }
 
+type SharedGlobals struct {
+	kmemMtx          sync.Mutex
+	currentAuthIdMtx sync.Mutex
+}
+
+var globals SharedGlobals
+
+func InitGlobals(globals *SharedGlobals) {
+	kmemMtx = &globals.kmemMtx
+	currentAuthIdMtx = &globals.currentAuthIdMtx
+}
+
+func init() {
+	// init in plugins is only called for modules not yet in the program
+	InitGlobals(&globals)
+}
+
 type HenV struct {
 	wg               sync.WaitGroup
 	listenerMtx      sync.RWMutex

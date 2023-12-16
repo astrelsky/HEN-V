@@ -15,13 +15,13 @@ const (
 )
 
 var (
-	_currentAuthIdMtx sync.Mutex
-	_currentUcred     = GetCurrentProc().GetUcred()
+	currentAuthIdMtx *sync.Mutex
+	_currentUcred    = GetCurrentProc().GetUcred()
 )
 
 func (u KUcred) RunWithAuthId(authid uint64, callback func()) {
-	_currentAuthIdMtx.Lock()
-	defer _currentAuthIdMtx.Unlock()
+	currentAuthIdMtx.Lock()
+	defer currentAuthIdMtx.Unlock()
 	addr := uintptr(u) + _UCRED_AUTHID_OFFSET
 	orig := kread64(addr)
 	kwrite64(addr, authid)

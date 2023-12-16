@@ -8,7 +8,7 @@ const (
 )
 
 var (
-	libSceSystemService             = syscall.LazyPrx{Name: "libSceSystemService.sprx"}
+	libSceSystemService             = &syscall.LazyPrx{Name: "libSceSystemService.sprx"}
 	sceSystemServiceGetAppStatus    = libSceSystemService.NewProc("sceSystemServiceGetAppStatus")
 	sceSystemServiceAddLocalProcess = libSceSystemService.NewProc("sceSystemServiceAddLocalProcess")
 	sceAppMessagingSendMsg          = libSceSystemService.NewProc("sceAppMessagingSendMsg")

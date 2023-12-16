@@ -8,7 +8,7 @@ import (
 	"unsafe"
 )
 
-var kmemMtx sync.Mutex
+var kmemMtx *sync.Mutex
 
 type KernelMemoryReader struct {
 	Address uintptr

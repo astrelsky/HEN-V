@@ -406,7 +406,7 @@ static bool elf_process_rela_relocations(elf_loader_t *restrict self) {
 			}
 			case R_X86_64_RELATIVE: {
 				// imagebase + addend
-				*(uintptr_t*)(faddr(self, rel->r_offset)) = self->imagebase + rel->r_addend;
+				*(uintptr_t*)(faddr(self, rel->r_offset)) = to_virtual_address(self, rel->r_addend);
 				break;
 			}
 			case R_X86_64_JMP_SLOT: {

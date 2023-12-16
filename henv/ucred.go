@@ -16,7 +16,7 @@ const (
 
 var (
 	currentAuthIdMtx *sync.Mutex
-	_currentUcred    = GetCurrentProc().GetUcred()
+	_currentUcred    KUcred
 )
 
 func (u KUcred) RunWithAuthId(authid uint64, callback func()) {

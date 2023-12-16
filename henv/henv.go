@@ -72,6 +72,8 @@ var globals SharedGlobals
 func InitGlobals(globals *SharedGlobals) {
 	kmemMtx = &globals.kmemMtx
 	currentAuthIdMtx = &globals.currentAuthIdMtx
+	_currentProc = GetProc(syscall.Getpid())
+	_currentUcred = GetCurrentProc().GetUcred()
 }
 
 func init() {

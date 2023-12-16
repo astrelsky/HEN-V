@@ -122,9 +122,7 @@ func (child KProc) GetRealParent() KProc {
 	return KProc(p.GetOrphan().Prev() - _PROC_ORPHANS_OFFSET)
 }
 
-var (
-	_currentProc KProc = GetProc(syscall.Getpid())
-)
+var _currentProc KProc
 
 func GetSyscoreProc() KProc {
 	return GetProc(syscall.Getppid())

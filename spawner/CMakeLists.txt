@@ -57,7 +57,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_SOURCE -D_POSIX_C_SOURCE=200112 -D_
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin -nostdlib")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -fPIE")
 
-add_dependencies(${PROJECT_NAME} daemon)
+#add_dependencies(${PROJECT_NAME} daemon)
 add_dependencies(${PROJECT_NAME} NidResolver)
 add_dependencies(${PROJECT_NAME} HenVShared)
 target_sources(${PROJECT_NAME} PRIVATE ${SrcFiles})

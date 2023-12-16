@@ -321,6 +321,10 @@ static bool map_elf_memory(elf_loader_t *restrict self) {
 	const Elf64_Phdr *restrict phdrs = get_program_headers(self);
 
 	for (ssize_t i = 0; i < elf->e_phnum; i++) {
+		if (!is_loadable(phdrs + i)) {
+			continue;
+		}
+
 		uintptr_t res;
 		const uintptr_t addr = to_virtual_address(self, phdrs[i].p_paddr);
 		const size_t size = page_align(phdrs[i].p_memsz);

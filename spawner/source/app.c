@@ -10,15 +10,17 @@
 #include <sys/mount.h>
 #include <sys/_iovec.h>
 
+#include "app.h"
+
 static const char *json = "{\n"
 	"    \"applicationCategoryType\": 33554432,\n"
 	"    \"localizedParameters\": {\n"
     "        \"defaultLanguage\": \"en-US\",\n"
     "        \"en-US\": {\n"
-    "            \"titleName\": \"HomebrewDaemon\"\n"
+    "            \"titleName\": \"HEN-V\"\n"
     "        }\n"
 	"    },\n"
-	"    \"titleId\": \"BREW00000\"\n"
+	"    \"titleId\": \""APP_TITLE_ID"\"\n"
 	"}\n";
 
 typedef struct {
@@ -99,29 +101,45 @@ bool make_homebrew_app(void) {
 		perror("makenewapp remount");
 		return false;
 	}
-	if (mkdir("/system_ex/app/BREW00000", MKDIR_FLAGS) == -1) {
+	if (mkdir("/system_ex/app/"APP_TITLE_ID"", MKDIR_FLAGS) == -1) {
 		const int err = errno;
 		if (err != EEXIST) {
-			perror("makenewapp mkdir /system_ex/app/BREW00000");
+			perror("makenewapp mkdir /system_ex/app/"APP_TITLE_ID"");
 			return false;
 		}
-		puts("BREW00000 already exists, assuming proper installation");
+		puts(""APP_TITLE_ID" already exists, assuming proper installation");
 		return true;
 	}
-	if (!copyfile("/system_ex/app/NPXS40028/eboot.bin", "/system_ex/app/BREW00000/eboot.bin")) {
+	if (!copyfile("/system_ex/app/NPXS40028/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/eboot.bin")) {
 		puts("failed to copy redis eboot.bin");
 		return false;
 	}
-	if (!mkdir_if_necessary("/system_ex/app/BREW00000/sce_sys")) {
+	if (!mkdir_if_necessary("/system_ex/app/"APP_TITLE_ID"/sce_sys")) {
 		return false;
 	}
-	FILE *fp = fopen("/system_ex/app/BREW00000/sce_sys/param.json", "w+");
+	FILE *fp = fopen("/system_ex/app/"APP_TITLE_ID"/sce_sys/param.json", "w+");
 	if (fp == NULL) {
 		perror("open failed");
 		return false;
 	}
 	fwrite(json, 1, __builtin_strlen(json), fp);
 	fclose(fp);
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload0.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload1.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload2.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload3.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload4.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload5.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload6.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload7.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload8.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload9.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload10.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload11.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload12.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload13.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload14.bin");
+	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload15.bin");
 	return true;
 }
 

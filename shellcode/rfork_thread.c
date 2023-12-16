@@ -112,11 +112,11 @@ static inline int __attribute__((always_inline)) isEqual(const char *restrict sr
 }
 
 static inline int __attribute__((always_inline)) isHomebrewDaemon(const char *path) {
-	// /system_ex/app/BREW00000
+	// /system_ex/app/HENV00000
 	volatile unsigned long src[3];
 	src[0] = 0x5F6D65747379732F;
 	src[1] = 0x422F7070612F7865;
-	src[2] = 0x3030303030574552;
+	src[2] = 0X30303030564E4548;
 	return isEqual((char*)src, path);
 }
 

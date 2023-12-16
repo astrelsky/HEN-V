@@ -73,7 +73,7 @@ static bool runElf(Hijacker *hijacker) {
 
 static bool load(uintptr_t proc) {
 	puts("setting process name");
-	proc_set_name(proc, "HomebrewDaemon");
+	proc_set_name(proc, "HEN-V");
 
 	const int pid = proc_get_pid(proc);
 	char name[PROC_SELFINFO_NAME_SIZE];
@@ -671,7 +671,7 @@ extern int main(void) {
 	uintptr_t spawned = 0;
 	pthread_create(&td, NULL, hook_thread, &spawned);
 
-	if (!launch_app("BREW00000", &gAppId)) {
+	if (!launch_app(APP_TITLE_ID, &gAppId)) {
 		// we're screwed
 		return 0;
 	}

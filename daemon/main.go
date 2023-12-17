@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 )
 
 const CANCEL_ADDRESS = ":9050"
@@ -45,6 +46,7 @@ func klog(ctx context.Context) {
 				case <-done:
 					return
 				default:
+					log.Printf("runtime.NumCPU: %v\n", runtime.NumCPU())
 					n, err := tcp.ReadFrom(fp)
 					log.Printf("read %v bytes from klog\n", n)
 					if err != nil {
@@ -64,24 +66,27 @@ func canceller() context.Context {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Println(err)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Println(err)
+			}
+			if conn != nil {
+				conn.Close()
+			}
+			cancel()
 		}
-		if conn != nil {
-			conn.Close()
-		}
-		cancel()
 	}()
 	return ctx
 }
 
 func main() {
+	log.Printf("runtime.NumCPU: %v\n", runtime.NumCPU())
 	ctx := canceller()
 	hen, ctx := henv.NewHenV(ctx)
 	klogctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go klog(klogctx)
 	hen.Start(ctx)
+	go klog(klogctx)
 	hen.Wait()
 }

@@ -32,8 +32,6 @@
 #define LNC_ERROR_APP_NOT_FOUND 0x80940031
 #define ENTRYPOINT_OFFSET 0x70
 
-#define PING 0
-#define PONG 1
 #define PROCESS_LAUNCHED 1
 
 #define LOOB_BUILDER_SIZE 21
@@ -379,6 +377,7 @@ bool touch_file(const char* destfile) {
 
 
 int network_listen(const char *soc_path) {
+	unlink(soc_path);
 	int s = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (s < 0) {
 		perror("[Spawner] Socket failed!");
@@ -486,21 +485,6 @@ static void *hook_thread(void *args) {
 		puts("read failed");
 		ipc_socket_close(&g_ipc_socket);
 		return NULL;
-	}
-
-	if (res.cmd == PING) {
-		puts("ping received");
-		int reply = PONG;
-		if (_write(g_ipc_socket.conn, &reply, sizeof(reply)) == -1) {
-			puts("write failed");
-			ipc_socket_close(&g_ipc_socket);
-			return NULL;
-		}
-		if (_read(g_ipc_socket.conn, &res, sizeof(res)) == -1) {
-			puts("read failed");
-			ipc_socket_close(&g_ipc_socket);
-			return NULL;
-		}
 	}
 
 	if (res.cmd != PROCESS_LAUNCHED) {

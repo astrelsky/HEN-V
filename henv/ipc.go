@@ -30,11 +30,7 @@ var (
 	ErrUnexpectedRip = errors.New("unexpected rip value, something went wrong")
 )
 
-const (
-	IPC_PING             = 0
-	IPC_PONG             = 1
-	IPC_PROCESS_LAUNCHED = 1
-)
+const IPC_PROCESS_LAUNCHED = 1
 
 type IpcResult struct {
 	cmd    int32
@@ -138,31 +134,6 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 			log.Printf("syscore ipc only read %v out of %v bytes", n, PACKET_SIZE)
 			conn = reconnector()
 			continue
-		}
-		if cmd.cmd == IPC_PING {
-			var reply int32 = IPC_PONG
-			tmp := unsafe.Slice((*byte)(unsafe.Pointer(&reply)), 4)
-			n, err = conn.Write(tmp)
-
-			// NOTE: we panic here because this should NEVER EVER EVER happen
-			if err != nil {
-				panic(err)
-			}
-			if n != len(tmp) {
-				log.Panicf("syscore ipc only sent %v out of %v bytes", n, len(tmp))
-			}
-
-			n, err = conn.Read(buf)
-			if err != nil {
-				log.Println(err)
-				conn = reconnector()
-				continue
-			}
-			if n != int(PACKET_SIZE) {
-				log.Printf("syscore ipc only read %v out of %v bytes", n, PACKET_SIZE)
-				conn = reconnector()
-				continue
-			}
 		}
 
 		if cmd.cmd != IPC_PROCESS_LAUNCHED {

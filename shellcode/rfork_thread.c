@@ -11,10 +11,8 @@
 
 #define SIN_ZERO_SIZE 8
 
-#define PING 0
-#define PONG 1
 #define PROCESS_LAUNCHED 1
-#define MSG_NOSIGNAL    0x20000         /* do not generate SIGPIPE on EOF */
+#define MSG_NOSIGNAL    0x20000
 #define TITLEID_OFFSET 0xd
 
 // NOLINTBEGIN(*)
@@ -44,7 +42,6 @@ typedef struct {
 	int (*close)(int fd);
     int (*connect)(int s, void *name, unsigned int namelen);
 	long (*send)(int sockfd, const void *buf, int len, int flags);
-	long (*recv)(int sockfd,  void * buf, int len, int flags);
 	int (*access)(const char *path, int flags);
 } ExtraStuff;
 
@@ -184,24 +181,6 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 	if (stuff->sock == -1) {
 		if (reconnect((char*)ipc, stuff) == -1) {
 			return orig(flags, stack, func, arg);
-		}
-	} else {
-		volatile struct result res;
-		res.cmd = PING;
-		res.func = 0;
-		res.pid = 0;
-		if (stuff->send(stuff->sock, (void*)&res, sizeof(res), MSG_NOSIGNAL) == -1) {
-			if (reconnect((char*)ipc, stuff) == -1) {
-				return exit_fail(flags, stack, func, arg, orig, stuff);
-			}
-		} else {
-			int reply = 0;
-			if (stuff->recv(stuff->sock, &reply, sizeof(reply), MSG_NOSIGNAL) == -1) {
-				return exit_fail(flags, stack, func, arg, orig, stuff);
-			}
-			if (reply != PONG) {
-				return exit_fail(flags, stack, func, arg, orig, stuff);
-			}
 		}
 	}
 

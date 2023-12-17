@@ -51,6 +51,7 @@ typedef struct {
 struct result {
 	int cmd;
 	int pid;
+	void *args;
 	func_t func;
 	unsigned int prefix;
 };
@@ -152,6 +153,7 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 		.cmd = PROCESS_LAUNCHED,
 		.pid = pid,
 		.func = homebrew ? func : 0,
+		.args = arg,
 		.prefix = prefix,
 	};
 

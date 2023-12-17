@@ -35,6 +35,7 @@ const IPC_PROCESS_LAUNCHED = 1
 type IpcResult struct {
 	cmd    int32
 	pid    int32
+	args   uintptr
 	fun    uintptr
 	prefix uint32
 	_      uint32
@@ -185,7 +186,7 @@ func getUnexpectedSignalError(sig syscall.Signal) error {
 	return fmt.Errorf("process received signal %s but SIGTRAP was expected", sig.String())
 }
 
-func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
+func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err error) {
 	defer func() {
 		if err != nil {
 			tracer.Kill(false)
@@ -203,6 +204,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun uintptr) (err error) {
 	}
 
 	regs.Rip = int64(fun)
+	regs.Rdi = int64(args)
 
 	err = tracer.SetRegisters(&regs)
 	if err != nil {

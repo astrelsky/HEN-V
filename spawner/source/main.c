@@ -21,6 +21,7 @@
 #include <sys/signal.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -456,6 +457,7 @@ static bool is_process_alive(int pid) {
 typedef struct {
 	int cmd;
 	int pid;
+	uintptr_t args;
 	uintptr_t func;
 } ipc_result_t;
 
@@ -516,7 +518,9 @@ static void *hook_thread(void *args) {
 	}
 
 	regs.r_rip = (register_t) res.func;
+	regs.r_rdi = (register_t) res.args;
 	printf("setting rip to 0x%08llx\n", res.func);
+	printf("setting rdi to 0x%08llx\n", res.args);
 	if (tracer_set_registers(&tracer, &regs)) {
 		puts("failed to set registers");
 		tracer_finalize(&tracer);
@@ -563,9 +567,12 @@ static void *hook_thread(void *args) {
 	} while (*spawned == 0);
 
 	uintptr_t libkernel = proc_get_lib(*spawned, LIBKERNEL_HANDLE);
+	uintptr_t libc = proc_get_lib(*spawned, LIBC_HANDLE);
 	uintptr_t base = shared_lib_get_imagebase(libkernel);
+	uintptr_t cbase = shared_lib_get_imagebase(libc);
 
 	printf("libkernel imagebase: 0x%08llx\n", base);
+	printf("libc imagebase: 0x%08llx\n", cbase);
 
 	puts("spawned process obtained");
 
@@ -584,6 +591,9 @@ static void *hook_thread(void *args) {
 
 	// force the entrypoint to an infinite loop so that it doesn't start until we're ready
 	userland_copyin(pid, loop.data, base + ENTRYPOINT_OFFSET, sizeof(loop.data));
+	uint8_t ret = 0xc3; // NOLINT
+	userland_copyin(pid, &ret, base + 0x10, 1); // NOLINT
+
 
 	puts("entrypoint patched");
 

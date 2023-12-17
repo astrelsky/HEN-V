@@ -44,6 +44,7 @@ type AppId uint32
 type HomebrewLaunchInfo struct {
 	tracer *Tracer
 	fun    uintptr
+	args   uintptr
 }
 
 type LaunchedAppInfo struct {
@@ -335,7 +336,7 @@ func (hen *HenV) homebrewHandler(ctx context.Context) {
 			return
 		case info := <-hen.homebrewChannel:
 			log.Println("received hombrew info")
-			err := handleHomebrewLaunch(hen, info.tracer, info.fun)
+			err := handleHomebrewLaunch(hen, info.tracer, info.fun, info.args)
 			if err != nil {
 				log.Println(err)
 			}

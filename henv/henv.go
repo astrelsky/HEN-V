@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/signal"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -97,6 +99,7 @@ type HenV struct {
 	msgChannel       chan *AppMessage
 	payloads         [15]Payload
 	cancel           context.CancelFunc
+	cancelChannel    chan os.Signal
 }
 
 type AppLaunchListener struct {
@@ -181,8 +184,10 @@ func (hen *HenV) NextPayload() (int, error) {
 	return -1, ErrTooManyPayloads
 }
 
-func NewHenV(ctx context.Context) (HenV, context.Context) {
+func NewHenV() (HenV, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
 	return HenV{
 		launchListeners: []AppLaunchListener{},
 		payloadChannel:  make(chan int), // unbuffered
@@ -192,6 +197,7 @@ func NewHenV(ctx context.Context) (HenV, context.Context) {
 		elfChannel:      make(chan ElfLoadInfo),        // unbuffered
 		msgChannel:      make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
 		cancel:          cancel,
+		cancelChannel:   c,
 	}, ctx
 }
 
@@ -202,6 +208,7 @@ func (hen *HenV) Wait() {
 func (hen *HenV) Close() error {
 	log.Println("NO MORE HOMEBREW FOR YOU!")
 	hen.cancel()
+	close(hen.cancelChannel)
 	close(hen.payloadChannel)
 	close(hen.listenerChannel)
 	close(hen.prefixChannel)
@@ -280,7 +287,10 @@ func (hen *HenV) removeRegisteredPid(pid uint32) {
 }
 
 func (hen *HenV) exitedProcessHandler(pids <-chan uint32) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	for pid := range pids {
 		hen.removeRegisteredPid(pid)
 	}
@@ -308,65 +318,11 @@ func mountProcFs() (int, error) {
 	return syscall.Open("/mnt/proc", syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0666)
 }
 
-func procWait(wg *sync.WaitGroup, pid int) {
-	defer wg.Done()
-
-	tracer, err := NewTracer(pid)
-
-	if err != nil {
-		log.Println(err)
-		return
-	}
-
-	defer tracer.Detach()
-
-	tracer.Continue()
-
-	for {
-		state, err := tracer.Wait(0)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		if state.Exited() {
-			log.Printf("proceess %v exited\n", pid)
-			return
-		}
-		if state.Signaled() {
-			log.Printf("process %v received signal %s\n", pid, state.Signal())
-		} else if state.Stopped() {
-			sig := state.StopSignal()
-
-			if sig == syscall.SIGKILL {
-				err = tracer.Kill(false)
-				if err != nil {
-					log.Println(err)
-				}
-				return
-			}
-
-			if sig == syscall.SIGILL || sig == syscall.SIGSEGV {
-				// TODO: print backtrace and then kill
-
-				tracer.Close(3)
-				return
-			}
-
-			log.Printf("process %v stopped on signal %s\n", pid, sig)
-
-			err = tracer.Continue()
-			if err != nil {
-				log.Println(err)
-				return
-			}
-		} else {
-			log.Println("wait returned for no reason?")
-		}
-	}
-}
-
 func (hen *HenV) homebrewHandler(ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 
 	log.Println("homebrew handler started")
 
@@ -375,7 +331,7 @@ func (hen *HenV) homebrewHandler(ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			return
 		case info := <-hen.homebrewChannel:
 			log.Println("received hombrew info")
@@ -413,12 +369,15 @@ func (hen *HenV) notifyLaunchListeners(info LaunchedAppInfo) error {
 }
 
 func (hen *HenV) launchListenerHandler(ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	log.Println("listener handler started")
 	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			cancel()
 			close(hen.listenerChannel)
 			return
@@ -437,12 +396,15 @@ func (hen *HenV) launchListenerHandler(ctx context.Context) {
 }
 
 func (hen *HenV) prefixHandler(ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	log.Println("prefix handler started")
 	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			cancel()
 			close(hen.prefixChannel)
 			return
@@ -463,14 +425,17 @@ func (hen *HenV) hasPrefixHandler(prefix string) bool {
 }
 
 func (hen *HenV) elfLoadHandler(ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	log.Println("elf loader started")
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer close(hen.elfChannel)
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			return
 		case info := <-hen.elfChannel:
 			func() {
@@ -510,11 +475,14 @@ func (hen *HenV) handleMsg(msg *AppMessage) error {
 }
 
 func (hen *HenV) msgHandler(ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	ctx, cancel := context.WithCancel(ctx)
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			cancel()
 			close(hen.msgChannel)
 			return

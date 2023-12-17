@@ -536,6 +536,12 @@ static void *hook_thread(void *args) {
 
 	if (WSTOPSIG(state) != SIGTRAP) {
 		printf("process received signal %d but SIGTRAP was expected\n", WSTOPSIG(state));
+		if (tracer_get_registers(&tracer, &regs)) {
+			puts("failed to get registers");
+		} else {
+			tracer_dump_registers(&regs);
+		}
+
 		tracer_finalize(&tracer);
 		return NULL;
 	}

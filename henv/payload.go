@@ -112,7 +112,10 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 
 	hen.wg.Add(1)
 	go func() {
-		defer hen.wg.Done()
+		defer func() {
+			hen.wg.Done()
+			log.Println("Done")
+		}()
 
 		p, fd, err := newLocalProcess(num)
 
@@ -174,7 +177,10 @@ func (hen *HenV) handlePayload(num int, ctx context.Context) error {
 }
 
 func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	for info := range payloads {
 		func() {
 			defer info.Close()
@@ -189,7 +195,10 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 }
 
 func (hen *HenV) runPayloadServer(ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 
 	log.Println("payload server started")
 
@@ -213,7 +222,7 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			return
 		default:
 			conn, err := ln.Accept()

@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"syscall"
+	"time"
 )
 
 const CANCEL_ADDRESS = ":9050"
@@ -43,10 +45,30 @@ func klog(ctx context.Context) {
 			tcp := conn.(*net.TCPConn)
 			for {
 				select {
-				case <-done:
+				case _, _ = <-done:
 					return
 				default:
 					log.Printf("runtime.NumCPU: %v\n", runtime.NumCPU())
+					m, err := syscall.SysctlUint32("kern.ipc.soacceptqueue")
+					if err != nil {
+						log.Println(err)
+					}
+					log.Printf("kern.ipc.soacceptqueue: %v\n", m)
+					host, err := syscall.Sysctl("kern.hostname")
+					if err != nil {
+						log.Println(err)
+					}
+					log.Printf("kern.hostname: %v\n", host)
+					ips, err := net.LookupIP("192.168.1.5")
+					if err != nil {
+						log.Println(err)
+					}
+					log.Println("ips:")
+					for i := range ips {
+						log.Println(ips[i])
+					}
+					log.Printf("NumGoroutine: %v\n", runtime.NumGoroutine())
+					//runtime.Breakpoint()
 					n, err := tcp.ReadFrom(fp)
 					log.Printf("read %v bytes from klog\n", n)
 					if err != nil {
@@ -59,31 +81,32 @@ func klog(ctx context.Context) {
 	}
 }
 
-func canceller() context.Context {
+func canceller() {
 	ln, err := net.Listen("tcp", CANCEL_ADDRESS)
 	if err != nil {
 		panic(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Println(err)
-			}
-			if conn != nil {
-				conn.Close()
-			}
-			cancel()
-		}
-	}()
-	return ctx
+	defer ln.Close()
+	conn, err := ln.Accept()
+	if err != nil {
+		log.Println(err)
+	}
+	if conn != nil {
+		conn.Close()
+	}
+	log.Println("cancelled")
+	err = syscall.Kill(syscall.Getpid(), syscall.SIGINT)
+	if err != nil {
+		log.Println(err)
+	}
+	time.Sleep(time.Second * 5)
+	runtime.Breakpoint()
 }
 
 func main() {
 	log.Printf("runtime.NumCPU: %v\n", runtime.NumCPU())
-	ctx := canceller()
-	hen, ctx := henv.NewHenV(ctx)
+	go canceller()
+	hen, ctx := henv.NewHenV()
 	klogctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	hen.Start(ctx)

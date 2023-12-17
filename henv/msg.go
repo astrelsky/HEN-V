@@ -106,7 +106,10 @@ func SceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, fla
 }
 
 func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 	defer hen.ClosePayload(p.num)
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -314,7 +317,7 @@ func (hen *HenV) payloadMessageReceiver(ctx context.Context) {
 	defer cancel()
 	for {
 		select {
-		case <-ctx.Done():
+		case _, _ = <-ctx.Done():
 			return
 		default:
 			err := hen.pollPayloadMessages()

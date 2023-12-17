@@ -73,7 +73,10 @@ func handleSyscoreIpc(hen *HenV, ctx context.Context, packets <-chan any) {
 }
 
 func startSyscoreIpc(hen *HenV, ctx context.Context) {
-	defer hen.wg.Done()
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
 
 	log.Println("syscore ipc started")
 

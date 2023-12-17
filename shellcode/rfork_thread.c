@@ -1,5 +1,5 @@
 #define TITLEID_LENGTH 10
-#define BREW 0x57455242
+#define HENV 0x564E4548
 #define F_OK 0
 #define NULL 0
 
@@ -13,6 +13,7 @@
 
 #define PROCESS_LAUNCHED 1
 #define MSG_NOSIGNAL    0x20000
+#define	SIGKILL 9
 #define TITLEID_OFFSET 0xd
 
 // NOLINTBEGIN(*)
@@ -42,7 +43,9 @@ typedef struct {
 	int (*close)(int fd);
     int (*connect)(int s, void *name, unsigned int namelen);
 	long (*send)(int sockfd, const void *buf, int len, int flags);
+	int (*kill)(int pid, int sig);
 	int (*access)(const char *path, int flags);
+	//int *(*__error)(void);
 } ExtraStuff;
 
 struct result {
@@ -66,7 +69,10 @@ struct result {
 #define IPC_PATH_LENGTH 16
 
 
-static inline int __attribute__((always_inline)) reconnect(const char *restrict path, ExtraStuff *restrict stuff) {
+static inline int __attribute__((always_inline)) reconnect(ExtraStuff *restrict stuff) {
+	volatile unsigned long ipc[2];
+	ipc[0] = 0x5f6d65747379732f;
+	ipc[1] = 0x004350492f706d74;
     volatile struct sockaddr_un server;
 	if (stuff->sock != -1) {
 		stuff->close(stuff->sock);
@@ -78,7 +84,7 @@ static inline int __attribute__((always_inline)) reconnect(const char *restrict 
 
 	server.sun_len = 0;
     server.sun_family = AF_UNIX;
-	__builtin_memcpy((char*)server.sun_path, path, IPC_PATH_LENGTH);
+	__builtin_memcpy((char*)server.sun_path, (void*)ipc, IPC_PATH_LENGTH);
 
     if (stuff->connect(stuff->sock, (void*)&server, SERVER_SIZE) == -1){
 		stuff->close(stuff->sock);
@@ -86,15 +92,6 @@ static inline int __attribute__((always_inline)) reconnect(const char *restrict 
 		return -1;
 	}
     return 0;
-}
-
-
-static inline int __attribute__((always_inline)) exit_fail(int flags, void *stack, func_t func, procSpawnArgs *restrict arg, rfork_thread_t orig, ExtraStuff *restrict stuff) {
-	if (stuff->sock != -1) {
-		stuff->close(stuff->sock);
-	}
-	stuff->sock = -1;
-	return orig(flags, stack, func, arg);
 }
 
 typedef union {
@@ -106,19 +103,6 @@ typedef union {
 } string_pointer_t;
 
 #define HOMEBREW_DAEMON_PREFIX_LENGTH 24
-
-static inline int __attribute__((always_inline)) isEqual(const char *restrict src, const char *restrict dst) {
-	return __builtin_memcmp(src, dst, HOMEBREW_DAEMON_PREFIX_LENGTH) == 0;
-}
-
-static inline int __attribute__((always_inline)) isHomebrewDaemon(const char *path) {
-	// /system_ex/app/HENV00000
-	volatile unsigned long src[3];
-	src[0] = 0x5F6D65747379732F;
-	src[1] = 0x482F7070612F7865;
-	src[2] = 0x3030303030564E45;
-	return isEqual((char*)src, path);
-}
 
 // /mnt/sandbox/xxxxyyyyy_000/app0/homebrew.elf
 #define SANDBOX_PATH_LENGTH 26
@@ -134,71 +118,57 @@ static inline int __attribute__((always_inline)) isHomebrew(ExtraStuff *restrict
 		return 0;
 	}
 
-	if (isHomebrewDaemon(arg->path) == 1) {
-		// the homebrew.elf file won't be present for the daemon so we'll explicitly check
-		return 1;
-	}
-
 	char path[HOMEBREW_PATH_LENGTH];
-	volatile unsigned long *dst = (unsigned long *) copySandboxPath(path, arg->sandboxPath);
+	volatile unsigned long *dst = (unsigned long *)copySandboxPath(path, arg->sandboxPath);
 	dst[0] = 0x6F682F307070612F;
 	dst[1] = 0x652E77657262656D;
 	dst[2] = 0x666C;
 	return stuff->access(path, F_OK) == 0;
 }
 
-static inline unsigned int __attribute__((always_inline)) getTitleId(procSpawnArgs *restrict arg) {
+static inline unsigned int __attribute__((always_inline)) getTitleIdPrefix(procSpawnArgs *restrict arg) {
 	return *(unsigned int *)(arg->sandboxPath + TITLEID_OFFSET);
 }
 
 static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_t func, procSpawnArgs *restrict arg, rfork_thread_t orig, ExtraStuff *restrict stuff) {
-	if (!isHomebrew(stuff, arg)) {
-		const int pid = orig(flags, stack, func, arg);
-		if (stuff->sock == -1) {
-			// too bad
-			return pid;
+	const unsigned int prefix = getTitleIdPrefix(arg);
+	const int homebrew = prefix == HENV || isHomebrew(stuff, arg);
+	if (homebrew && stuff->sock == -1) {
+		// if this is homebrew and we're not connected, attempt to connect first
+		if (reconnect(stuff) == -1) {
+			//return orig(flags, stack, func, arg);
+			// critical failure
+			return -1;
 		}
+	}
 
-		struct result res = {
-			.cmd = PROCESS_LAUNCHED,
-			.pid = pid,
-			.func = 0,
-			.prefix = getTitleId(arg)
-		};
-		if (stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL) == -1) {
-			// close the connection if the send failed
-			stuff->close(stuff->sock);
-			stuff->sock = -1;
-		}
+	const int pid = orig(flags, stack, homebrew ? stuff->inf_loop : func, arg);
+
+	if (pid == -1) {
 		return pid;
 	}
 
-	volatile unsigned long ipc[2];
-	ipc[0] = 0x5f6d65747379732f;
-	//  tmp/IPC
-	ipc[1] = 0x004350492f706d74;  // Little-endian
-
-	if (stuff->sock == -1) {
-		if (reconnect((char*)ipc, stuff) == -1) {
-			return orig(flags, stack, func, arg);
-		}
-	}
-
-	const int pid = orig(flags, stack, stuff->inf_loop, arg);
 	struct result res = {
 		.cmd = PROCESS_LAUNCHED,
 		.pid = pid,
-		.func = func,
-		.prefix = getTitleId(arg)
+		.func = homebrew ? func : 0,
+		.prefix = prefix,
 	};
 
-	// we must always write a response so the daemon doesn't get stuck
-	if (stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL) == -1) {
-		exit_fail(flags, stack, func, arg, orig, stuff);
+	if (stuff->sock == -1) {
+		// shame
 		return pid;
 	}
-	if (pid == -1) {
-		return exit_fail(flags, stack, func, arg, orig, stuff);
+
+	if (stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL) == -1) {
+		stuff->close(stuff->sock);
+		stuff->sock = -1;
+		if (homebrew) {
+			// if we failed here and it is homebrew we need to kill the pid
+			// if we don't then it'll be stuck in an infinite loop
+			stuff->kill(pid, SIGKILL);
+		}
+		return -1;
 	}
 
 	return pid;

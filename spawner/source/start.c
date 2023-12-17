@@ -180,6 +180,9 @@ STUB(sceKernelJitCreateSharedMemory)
 
 STUB(strrchr)
 
+STUB(connect)
+STUB(inet_addr)
+
 #define LINK(lib, fname) sceKernelDlsym(lib, #fname, &f_##fname)
 #define LIBKERNEL_LINK(fname) LINK(libkernel, fname)
 #define LIBC_LINK(fname) LINK(libc, fname)
@@ -228,6 +231,8 @@ void _start(struct payload_args *args) {
 	LIBKERNEL_LINK(signal);
 	LIBC_LINK(setjmp);
 	LIBC_LINK(longjmp);
+	LIBC_LINK(inet_addr);
+	LIBKERNEL_LINK(connect);
 
 	if (f_setjmp == NULL) {
 		puts("failed to resolve setjmp");

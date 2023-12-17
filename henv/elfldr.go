@@ -887,9 +887,6 @@ func readElfData(r io.ReadCloser) (data []byte, err error) {
 
 	buf.Grow(int(ELF_HEADER_SIZE))
 
-	// TODO read elf
-	// need to do this the hard way because people are stupid and may not close the
-	// connection after sending all the data
 	n, err := buf.ReadFrom(r)
 	if n != int64(ELF_HEADER_SIZE) {
 		if err == nil {

@@ -309,16 +309,12 @@ static bool launch_app(const char *titleId, uint32_t *appId) {
 	return false;
 }
 
-
-
-
 typedef struct {
 	uint8_t data[LOOB_BUILDER_SIZE];
 } loop_builder_t;
 
 // NOLINTBEGIN(readability-magic-numbers)
 
-/*
 static uint8_t SLEEP_LOOP[] = {
 	// INT3
 	0xcc,
@@ -331,28 +327,12 @@ static uint8_t SLEEP_LOOP[] = {
 	// INT3
 	0xcc
 };
-*/
-
-static void loop_builder_init(loop_builder_t *restrict self) {
-	// FIXME
-    volatile uint8_t *ptr = (volatile uint8_t *)self->data;
-    ptr[0] = 0xcc;
-    ptr[1] = 0x48;
-    ptr[2] = 0xb8;
-    ptr[11] = 0x48;
-    ptr[12] = 0xc7;
-    ptr[13] = 0xc7;
-    ptr[14] = 0x00;
-    ptr[15] = 0x09;
-    ptr[16] = 0x3d;
-    ptr[17] = 0x00;
-    ptr[18] = 0xff;
-    ptr[19] = 0xd0;
-    ptr[20] = 0xcc;
-    //memcpy(self->data, SLEEP_LOOP, LOOB_BUILDER_SIZE);
-}
 
 // NOLINTEND(readability-magic-numbers)
+
+static void loop_builder_init(loop_builder_t *restrict self) {
+	memcpy(self->data, SLEEP_LOOP, LOOB_BUILDER_SIZE);
+}
 
 static void loop_builder_set_target(loop_builder_t *restrict self, uintptr_t addr) {
 	*(uintptr_t *)(self->data + LOOP_BUILDER_TARGET_OFFSET) = addr;

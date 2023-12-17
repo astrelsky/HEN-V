@@ -71,6 +71,9 @@ struct result {
 
 static inline int __attribute__((always_inline)) reconnect(const char *restrict path, ExtraStuff *restrict stuff) {
     volatile struct sockaddr_un server;
+	if (stuff->sock != -1) {
+		stuff->close(stuff->sock);
+	}
     stuff->sock = stuff->socket(AF_UNIX, SOCK_STREAM, 0);
 	if (stuff->sock == -1) {
 		return -1;
@@ -115,8 +118,8 @@ static inline int __attribute__((always_inline)) isHomebrewDaemon(const char *pa
 	// /system_ex/app/HENV00000
 	volatile unsigned long src[3];
 	src[0] = 0x5F6D65747379732F;
-	src[1] = 0x422F7070612F7865;
-	src[2] = 0X30303030564E4548;
+	src[1] = 0x482F7070612F7865;
+	src[2] = 0x3030303030564E45;
 	return isEqual((char*)src, path);
 }
 
@@ -124,8 +127,8 @@ static inline int __attribute__((always_inline)) isHomebrewDaemon(const char *pa
 #define SANDBOX_PATH_LENGTH 26
 #define HOMEBREW_PATH_LENGTH 48
 
-static inline char *restrict __attribute__((always_inline)) copySandboxPath(char *restrict dst, const char *restrict src) {
-	return __builtin_memcpy(dst, src, SANDBOX_PATH_LENGTH) + SANDBOX_PATH_LENGTH;
+static inline char *__attribute__((always_inline)) copySandboxPath(char *restrict dst, const char *restrict src) {
+	return (char *)__builtin_memcpy(dst, src, SANDBOX_PATH_LENGTH) + SANDBOX_PATH_LENGTH;
 }
 
 static inline int __attribute__((always_inline)) isHomebrew(ExtraStuff *restrict stuff, procSpawnArgs *restrict arg) {
@@ -165,7 +168,11 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 			.func = 0,
 			.prefix = getTitleId(arg)
 		};
-		stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL);
+		if (stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL) == -1) {
+			// close the connection if the send failed
+			stuff->close(stuff->sock);
+			stuff->sock = -1;
+		}
 		return pid;
 	}
 
@@ -207,7 +214,10 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 	};
 
 	// we must always write a response so the daemon doesn't get stuck
-	stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL);
+	if (stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL) == -1) {
+		exit_fail(flags, stack, func, arg, orig, stuff);
+		return pid;
+	}
 	if (pid == -1) {
 		return exit_fail(flags, stack, func, arg, orig, stuff);
 	}

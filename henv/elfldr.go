@@ -135,6 +135,9 @@ func (ldr *ElfLoader) toVirtualAddress(addr uintptr) (uintptr, error) {
 		log.Println(err)
 		return 0, err
 	}
+	if text.Vaddr == 0 {
+		return ldr.imagebase + addr, nil
+	}
 	if addr >= uintptr(text.Vaddr) {
 		addr -= uintptr(text.Vaddr) + uintptr(text.Offset)
 	}
@@ -246,6 +249,7 @@ func (ldr *ElfLoader) mapElfMemory() error {
 		res, err := ldr.tracer.Mmap(addr, uint64(size), int32(prot), int32(flags), fd, 0)
 		if err != nil {
 			log.Println(err)
+			log.Printf("addr: %#08x, size: %v\n", addr, size)
 			return err
 		}
 		if res == -1 {

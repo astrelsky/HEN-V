@@ -104,6 +104,7 @@ type GnuHashTable struct {
 type Elf struct {
 	data      []byte
 	phdrs     []Elf64_Phdr
+	shdrs     []elf.Section64
 	reltab    []Elf64_Rela
 	plttab    []Elf64_Rela
 	symtab    []Elf64_Sym
@@ -112,6 +113,7 @@ type Elf struct {
 	hashtab   *ElfHashTable
 	gnuhash   *GnuHashTable
 	dynstr    []byte
+	shstrtab  []byte
 	textIndex int
 }
 
@@ -123,9 +125,18 @@ func NewElf(data []byte) (Elf, error) {
 
 	ehdr := (*Elf64_Ehdr)(unsafe.Pointer(&data[0]))
 	phdrs := unsafe.Slice((*Elf64_Phdr)(unsafe.Pointer(&data[ehdr.Phoff])), ehdr.Phnum)
+	shdrs := unsafe.Slice((*elf.Section64)(unsafe.Pointer(&data[ehdr.Shoff])), ehdr.Shnum)
+	var shstrtab []byte
+	if ehdr.Shnum > 0 && ehdr.Shstrndx > 0 {
+		off := shdrs[ehdr.Shstrndx].Off
+		length := shdrs[ehdr.Shstrndx].Size
+		shstrtab = unsafe.Slice((*byte)(unsafe.Pointer(&data[off])), length)
+	}
 	elf := Elf{
 		data:      data,
 		phdrs:     phdrs,
+		shdrs:     shdrs,
+		shstrtab:  shstrtab,
 		ehdr:      ehdr,
 		textIndex: -1,
 	}
@@ -166,15 +177,60 @@ func newGnuHashTable(data unsafe.Pointer) *GnuHashTable {
 	}
 }
 
+func (ldr *Elf) getSectionHeaderName(i int) string {
+	name := int(ldr.shdrs[i].Name)
+	index := bytes.IndexByte(ldr.shstrtab[name:], '\x00')
+	if index == -1 {
+		return ""
+	}
+	return string(ldr.shstrtab[name : name+index])
+}
+
+func (ldr *Elf) getSectionHeader(name string) *elf.Section64 {
+	for i := range ldr.shdrs {
+		if ldr.getSectionHeaderName(i) == name {
+			return &ldr.shdrs[i]
+		}
+	}
+	return nil
+}
+
+func (ldr *Elf) getOffsetsFromSectionHeaders() bool {
+	// while this is technically wrong since they aren't required
+	// it's more foolproof then parsing a broken dyntab
+	rela := ldr.getSectionHeader(".rela")
+	plt := ldr.getSectionHeader(".rela.plt")
+	sym := ldr.getSectionHeader(".dynsym")
+	str := ldr.getSectionHeader(".dynstr")
+	if rela != nil {
+		ldr.reltab = unsafe.Slice((*Elf64_Rela)(unsafe.Pointer(&ldr.data[rela.Off])), rela.Size/0x18)
+	}
+	if plt != nil {
+		ldr.plttab = unsafe.Slice((*Elf64_Rela)(unsafe.Pointer(&ldr.data[plt.Off])), plt.Size/0x18)
+	}
+	if sym != nil {
+		ldr.symtab = unsafe.Slice((*Elf64_Sym)(unsafe.Pointer(&ldr.data[sym.Off])), sym.Size/0x18)
+	}
+	if str != nil {
+		ldr.dynstr = ldr.data[str.Off : str.Off+str.Size]
+	}
+	return rela != nil && plt != nil && sym != nil && str != nil
+}
+
 func parseDynamicTable(ldr *Elf) error {
 	dyn, err := findDynamicTable(ldr)
 	if err != nil {
+		ldr.getOffsetsFromSectionHeaders()
 		return err
 	}
 
 	log.Println("parsing dynamic table")
 
 	ldr.dyntab = dyn
+
+	if ldr.getOffsetsFromSectionHeaders() {
+		return nil
+	}
 
 	var symtabOffset int
 	var reltabSize int
@@ -186,6 +242,9 @@ func parseDynamicTable(ldr *Elf) error {
 	for ; dyn.Tag() != elf.DT_NULL; dyn = dyn.Next() {
 		switch dyn.Tag() {
 		case elf.DT_RELA:
+			if ldr.reltab != nil {
+				continue
+			}
 			value, err := ldr.faddr(dyn.Value())
 			if err != nil {
 				log.Println(err)
@@ -196,6 +255,9 @@ func parseDynamicTable(ldr *Elf) error {
 			const size = int(unsafe.Sizeof(Elf64_Rela{}))
 			reltabSize = dyn.Value() / size
 		case elf.DT_JMPREL:
+			if ldr.plttab != nil {
+				continue
+			}
 			value, err := ldr.faddr(dyn.Value())
 			if err != nil {
 				log.Println(err)
@@ -206,6 +268,9 @@ func parseDynamicTable(ldr *Elf) error {
 			const size = int(unsafe.Sizeof(Elf64_Rela{}))
 			plttabSize = dyn.Value() / size
 		case elf.DT_SYMTAB:
+			if ldr.symtab != nil {
+				continue
+			}
 			value, err := ldr.toFileOffset(dyn.Value())
 			if err != nil {
 				log.Println(err)
@@ -213,6 +278,9 @@ func parseDynamicTable(ldr *Elf) error {
 			}
 			symtabOffset = int(value)
 		case elf.DT_STRTAB:
+			if ldr.dynstr != nil {
+				continue
+			}
 			value, err := ldr.faddr(dyn.Value())
 			if err != nil {
 				log.Println(err)
@@ -401,6 +469,9 @@ func (ldr *Elf) faddr(addr int) (unsafe.Pointer, error) {
 }
 
 func (ldr *Elf) getString(i int) string {
+	if i >= len(ldr.dynstr) {
+		return ""
+	}
 	index := bytes.IndexByte(ldr.dynstr[i:], 0)
 	if index == -1 {
 		return ""

@@ -181,7 +181,7 @@ func (hen *HenV) NextPayload() (int, error) {
 	return -1, ErrTooManyPayloads
 }
 
-func NewHenV() (HenV, context.Context) {
+func NewHenV(ctx context.Context) (HenV, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return HenV{
 		launchListeners: []AppLaunchListener{},

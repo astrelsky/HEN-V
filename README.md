@@ -13,6 +13,6 @@ Payloads
 --------
 
 * Payloads are run as a subprocess by HEN-V.
-* Up to 15 payloads may be running simultaneously.
+* Up to 15 payloads may be running simultaneously. (Actual budget limit may be vary)
 * Payloads may communicate with HEN-V using the socket fd 3.
   All communication must follow the same format used with app messaging.

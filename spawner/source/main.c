@@ -43,6 +43,7 @@
 
 extern const unsigned int daemon_size;
 extern uint8_t daemon_start[];
+extern uint8_t util_start[];
 
 extern int _write(int fd, const void *, size_t); // NOLINT
 extern ssize_t _read(int, void *, size_t); // NOLINT
@@ -70,9 +71,9 @@ static bool runElf(Hijacker *hijacker) {
 }
 */
 
-static bool load(uintptr_t proc) {
+static bool load(uintptr_t proc, const char *pname, uint8_t *data) {
 	puts("setting process name");
-	proc_set_name(proc, "HEN-V");
+	proc_set_name(proc, pname);
 
 	const int pid = proc_get_pid(proc);
 	char name[PROC_SELFINFO_NAME_SIZE];
@@ -81,7 +82,7 @@ static bool load(uintptr_t proc) {
 	puts("jailbreaking new process");
 	jailbreak_process(proc, true);
 
-	if (run_elf(daemon_start, pid)) {
+	if (run_elf(data, pid)) {
 		__builtin_printf("process name %s pid %d\n", name, pid);
 		return true;
 	}
@@ -207,6 +208,11 @@ static uint32_t __attribute__ ((naked, noinline)) sceLncUtilKillApp(uint32_t app
 	__asm__ volatile("jmp *f_sceLncUtilKillApp(%rip)");
 }
 
+static uintptr_t __attribute__((used)) f_sceSystemServiceGetAppId = 0;
+static int32_t __attribute__((naked, noinline)) sceSystemServiceGetAppId(const char *titleid) {
+	__asm__ volatile("jmp *f_sceSystemServiceGetAppId(%rip)");
+}
+
 static int init_needed_functions(void) {
 	resolver_t resolver;
 	uintptr_t libUserService = get_libSceUserService();
@@ -265,6 +271,12 @@ static int init_needed_functions(void) {
 	f_sceLncUtilKillApp = LOOKUP_SYMBOL(&resolver, "sceLncUtilKillApp");
 	if (f_sceLncUtilKillApp == 0) {
 		puts("failed to resolve sceLncUtilKillApp");
+		result = -1;
+	}
+
+	f_sceSystemServiceGetAppId = LOOKUP_SYMBOL(&resolver, "sceSystemServiceGetAppId");
+	if (f_sceSystemServiceGetAppId == 0) {
+		puts("failed to resolve sceSystemServiceGetAppId");
 		result = -1;
 	}
 
@@ -639,6 +651,10 @@ extern int main(void) {
 		return 0;
 	}
 
+	if (!make_util_app()) {
+		return 0;
+	}
+
 	uint8_t qaflags[QAFLAGS_SIZE];
 	kernel_copyout(kernel_base + get_qa_flags_offset(), qaflags, QAFLAGS_SIZE);
 	qaflags[1] |= 1 | 2;
@@ -648,23 +664,53 @@ extern int main(void) {
 
 	//puts("spawning daemon");
 
-	pthread_t td = NULL;
-	uintptr_t spawned = 0;
-	pthread_create(&td, NULL, hook_thread, &spawned);
+	if (sceSystemServiceGetAppId(UTIL_TITLE_ID) <= 0) {
+		pthread_t td = NULL;
+		uintptr_t spawned = 0;
+		pthread_create(&td, NULL, hook_thread, &spawned);
 
-	if (!launch_app(APP_TITLE_ID, &gAppId)) {
-		// we're screwed
-		return 0;
+		puts("launching utility app");
+
+
+		if (!launch_app(UTIL_TITLE_ID, &gAppId)) {
+			// we're screwed
+			return 0;
+		}
+
+		// the thread should have already completed
+		pthread_join(td, NULL);
+
+		if (spawned == 0 || !load(spawned, "HEN-V KLOG & FTP", util_start)) {
+			puts("failed to load elf into new process");
+			sceLncUtilKillApp(gAppId);
+			gAppId = 0;
+			return 0;
+		}
 	}
 
-	// the thread should have already completed
-	pthread_join(td, NULL);
+	gAppId = 0;
 
-	if (spawned == 0 || !load(spawned)) {
-		puts("failed to load elf into new process");
-		sceLncUtilKillApp(gAppId);
-		gAppId = 0;
-		return 0;
+	if (sceSystemServiceGetAppId(APP_TITLE_ID) <= 0) {
+
+		pthread_t td = NULL;
+		uintptr_t spawned = 0;
+		pthread_create(&td, NULL, hook_thread, &spawned);
+
+		puts("launching HEN-V");
+
+		if (!launch_app(APP_TITLE_ID, &gAppId)) {
+			// we're screwed
+			return 0;
+		}
+		// the thread should have already completed
+		pthread_join(td, NULL);
+
+		if (spawned == 0 || !load(spawned, "HEN-V", daemon_start)) {
+			puts("failed to load elf into new process");
+			sceLncUtilKillApp(gAppId);
+			gAppId = 0;
+			return 0;
+		}
 	}
 
 	return 0;

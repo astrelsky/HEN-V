@@ -203,8 +203,11 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 		return
 	}
 
+	// TODO: do we need to patch the init function?
+	// didn't need to do this before...
+
 	regs.Rip = int64(fun)
-	regs.Rdi = int64(args)
+	//regs.Rdi = int64(args)
 
 	err = tracer.SetRegisters(&regs)
 	if err != nil {

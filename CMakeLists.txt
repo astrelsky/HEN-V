@@ -25,5 +25,6 @@ add_subdirectory(chan)
 
 add_subdirectory(libNidResolver)
 add_subdirectory(shared)
+add_subdirectory(util)
 #add_subdirectory(daemon)
 add_subdirectory(spawner)

@@ -6,7 +6,7 @@
 
 cmake_minimum_required (VERSION 3.20)
 
-set(basename "spawner")
+set(basename "util")
 project(${basename} C)
 
 # Language Standard Defaults
@@ -50,23 +50,17 @@ set(D_SRC ${D_CWD}/source)
 
 file(GLOB SrcFiles ${D_SRC}/*.c ${D_SRC}/*.h)
 
-set(CMAKE_C_FLAGS "--target=x86_64-freebsd-pc-elf -march=znver2 -gfull -gdwarf-2 -O0")
+set(CMAKE_C_FLAGS "--target=x86_64-freebsd-pc-elf -march=znver2 -gfull -gdwarf-2 -O3")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c17 -Wall -Wextra -Werror -pedantic-errors")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DPPR -DPS5 -DPS5_FW_VERSION=${V_FW}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_SOURCE -D_POSIX_C_SOURCE=200112 -D__BSD_VISIBLE=1 -D__XSI_VISIBLE=500")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin -nostdlib")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -fPIE")
 
-#add_dependencies(${PROJECT_NAME} daemon)
-add_dependencies(${PROJECT_NAME} util)
-add_dependencies(${PROJECT_NAME} NidResolver)
-add_dependencies(${PROJECT_NAME} HenVShared)
 target_sources(${PROJECT_NAME} PRIVATE ${SrcFiles})
 target_include_directories(${PROJECT_NAME} PRIVATE "${D_CWD}/../include")
-target_include_directories(${PROJECT_NAME} PRIVATE "${D_CWD}/../chan/src")
-target_include_directories(${PROJECT_NAME} PRIVATE "${D_CWD}/../libNidResolver/include")
 target_include_directories(${PROJECT_NAME} PRIVATE "${D_CWD}/../shared/include")
 target_link_directories	(${PROJECT_NAME} PUBLIC "${PROJECT_ROOT}/lib")
-target_link_libraries	(${PROJECT_NAME} PUBLIC NidResolver HenVShared)
+target_link_libraries	(${PROJECT_NAME} PUBLIC kernel_sys SceLibcInternal)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_EXE_LINKER_FLAGS "-fuse-ld=lld -fPIC -Xlinker -pie -Xlinker -zmax-page-size=16384 -Xlinker -zcommon-page-size=16384 -Xlinker -T ${D_CWD}/linker.x -Wl,--build-id=none -Wl,-z,norelro")

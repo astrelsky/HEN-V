@@ -23,6 +23,17 @@ static const char *json = "{\n"
 	"    \"titleId\": \""APP_TITLE_ID"\"\n"
 	"}\n";
 
+static const char *util_json = "{\n"
+	"    \"applicationCategoryType\": 33554432,\n"
+	"    \"localizedParameters\": {\n"
+    "        \"defaultLanguage\": \"en-US\",\n"
+    "        \"en-US\": {\n"
+    "            \"titleName\": \"HEN-V KLOG & FTP\"\n"
+    "        }\n"
+	"    },\n"
+	"    \"titleId\": \""UTIL_TITLE_ID"\"\n"
+	"}\n";
+
 typedef struct {
 	const void *iov_base;
 	size_t iov_length;
@@ -98,13 +109,13 @@ static bool mkdir_if_necessary(const char *path) {
 bool make_homebrew_app(void) {
 	// REDIS -> NPXS40028
 	if (!remount("/dev/ssd0.system_ex", "/system_ex")) {
-		perror("makenewapp remount");
+		perror("make_homebrew_app remount");
 		return false;
 	}
 	if (mkdir("/system_ex/app/"APP_TITLE_ID"", MKDIR_FLAGS) == -1) {
 		const int err = errno;
 		if (err != EEXIST) {
-			perror("makenewapp mkdir /system_ex/app/"APP_TITLE_ID"");
+			perror("make_homebrew_app mkdir /system_ex/app/"APP_TITLE_ID"");
 			return false;
 		}
 		puts(""APP_TITLE_ID" already exists, assuming proper installation");
@@ -140,6 +151,34 @@ bool make_homebrew_app(void) {
 	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload13.bin");
 	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload14.bin");
 	copyfile("/system_ex/app/"APP_TITLE_ID"/eboot.bin", "/system_ex/app/"APP_TITLE_ID"/payload15.bin");
+	return true;
+}
+
+bool make_util_app(void) {
+	// REDIS -> NPXS40028
+	if (mkdir("/system_ex/app/"UTIL_TITLE_ID"", MKDIR_FLAGS) == -1) {
+		const int err = errno;
+		if (err != EEXIST) {
+			perror("make_util_app mkdir /system_ex/app/"UTIL_TITLE_ID"");
+			return false;
+		}
+		puts(""UTIL_TITLE_ID" already exists, assuming proper installation");
+		return true;
+	}
+	if (!copyfile("/system_ex/app/NPXS40028/eboot.bin", "/system_ex/app/"UTIL_TITLE_ID"/eboot.bin")) {
+		puts("failed to copy redis eboot.bin");
+		return false;
+	}
+	if (!mkdir_if_necessary("/system_ex/app/"UTIL_TITLE_ID"/sce_sys")) {
+		return false;
+	}
+	FILE *fp = fopen("/system_ex/app/"UTIL_TITLE_ID"/sce_sys/param.json", "w+");
+	if (fp == NULL) {
+		perror("open failed");
+		return false;
+	}
+	fwrite(util_json, 1, __builtin_strlen(util_json), fp);
+	fclose(fp);
 	return true;
 }
 

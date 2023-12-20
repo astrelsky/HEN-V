@@ -127,10 +127,6 @@ static const Elf64_Dyn *get_dynamic_table(elf_loader_t *restrict self) {
 	return NULL;
 }
 
-
-
-
-
 static uintptr_t to_virtual_address(elf_loader_t *restrict self, uintptr_t addr) {
 	const Elf64_Phdr *restrict text = get_text_header(self);
 	if (addr >= text->p_vaddr)  {

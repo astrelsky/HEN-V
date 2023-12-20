@@ -1,8 +1,14 @@
 package main
 
 import (
+	"context"
 	"henv"
 	"log"
+	"net"
+	"os"
+	"runtime"
+	"syscall"
+	"time"
 )
 
 const CANCEL_ADDRESS = ":9050"
@@ -12,7 +18,6 @@ func init() {
 	log.SetPrefix("[HEN-V] ")
 }
 
-/*
 func klog(ctx context.Context) {
 	//done := ctx.Done()
 
@@ -95,7 +100,6 @@ func canceller() {
 	time.Sleep(time.Second * 5)
 	runtime.Breakpoint()
 }
-*/
 
 func main() {
 	//log.Printf("runtime.NumCPU: %v\n", runtime.NumCPU())

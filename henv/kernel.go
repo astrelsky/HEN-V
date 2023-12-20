@@ -1,6 +1,7 @@
 package henv
 
 import (
+	"bytes"
 	"encoding/binary"
 	"runtime"
 	"sync"
@@ -48,6 +49,25 @@ func KernelCopyin(kdest uintptr, p []byte) (n int, err error) {
 	kmemMtx.Lock()
 	defer kmemMtx.Unlock()
 	return syscall.KernelCopyin(uintptr(kdest), p)
+}
+
+func KernelCopyoutString(ksrc uintptr) (s string, err error) {
+	kmemMtx.Lock()
+	defer kmemMtx.Unlock()
+	const BUF_SIZE = 16
+	buf := make([]byte, BUF_SIZE)
+	pos := 0
+	for err == nil {
+		_, err = KernelCopyout(ksrc+uintptr(pos), buf[pos:])
+		i := bytes.IndexByte(buf[pos:], 0)
+		if i != -1 {
+			s = string(buf[:pos+i])
+			return
+		}
+		buf = append(buf, make([]byte, BUF_SIZE)...)
+		pos += BUF_SIZE
+	}
+	panic("unreachable")
 }
 
 func KernelCopyoutUnsafe(ksrc uintptr, dst unsafe.Pointer, length int) (int, error) {

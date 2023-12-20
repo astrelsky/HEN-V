@@ -167,7 +167,7 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 
 		log.Println("tracer attached, sending info over channel")
 
-		hen.homebrewChannel <- HomebrewLaunchInfo{tracer: tracer, fun: cmd.fun}
+		hen.homebrewChannel <- HomebrewLaunchInfo{tracer: tracer, fun: cmd.fun, args: cmd.args}
 	}
 
 }
@@ -203,11 +203,8 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 		return
 	}
 
-	// TODO: do we need to patch the init function?
-	// didn't need to do this before...
-
 	regs.Rip = int64(fun)
-	//regs.Rdi = int64(args)
+	regs.Rdi = int64(args)
 
 	err = tracer.SetRegisters(&regs)
 	if err != nil {
@@ -288,6 +285,15 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 	}
 
 	_, err = UserlandCopyin(tracer.pid, base+ENTRYPOINT_OFFSET, loop.data[:])
+	if err != nil {
+		err = errors.Join(ErrCopyLoop, err)
+		log.Println(err)
+		return
+	}
+
+	// patch __DT_INIT to a single RET to prevent it from loading libraries, starting threads, etc.
+	ret := []byte{0xc3}
+	_, err = UserlandCopyin(tracer.pid, base+0x10, ret)
 	if err != nil {
 		err = errors.Join(ErrCopyLoop, err)
 		log.Println(err)

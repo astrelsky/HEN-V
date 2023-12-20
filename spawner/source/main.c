@@ -586,7 +586,6 @@ static void *hook_thread(void *args) {
 	uint8_t ret = 0xc3; // NOLINT
 	userland_copyin(pid, &ret, base + 0x10, 1); // NOLINT
 
-
 	puts("entrypoint patched");
 
 	puts("finishing process loading");

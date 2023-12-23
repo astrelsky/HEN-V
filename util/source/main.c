@@ -72,6 +72,7 @@ static bool tcp_write(tcp_socket_t *restrict self, const void *buf, size_t bufle
 		int res = poll(pfd, sizeof(pfd) / sizeof(struct pollfd), INFTIM);
 		if (res == -1 || res == 0) {
 			// error occured
+			perror("tcp_write poll failed");
 			return false;
 		}
 
@@ -85,7 +86,7 @@ static bool tcp_write(tcp_socket_t *restrict self, const void *buf, size_t bufle
 		// we are ready to write
 		const ssize_t result = send(self->fd, (uint8_t *)buf + wrote, buflen - wrote, MSG_NOSIGNAL);
 		if (result == -1) {
-			perror("write failed");
+			perror("tcp_write send failed");
 			return false;
 		}
 		wrote += result;
@@ -108,7 +109,7 @@ static int send_klog(tcp_socket_t *restrict sock) {
 	static char klogbuf[KLOG_BUF_SIZE];
 	int fd = open("/dev/klog", O_NONBLOCK, 0);
 	if (fd == -1) {
-		perror("open /dev/klog failed");
+		perror("send_klog open /dev/klog failed");
 		exit(0); // NOLINT
 		kill(getpid(), SIGKILL);
 	}
@@ -120,6 +121,7 @@ static int send_klog(tcp_socket_t *restrict sock) {
 		int res = poll(readfds, sizeof(readfds) / sizeof(struct pollfd), INFTIM);
 		if (res == -1 || res == 0) {
 			// error occured
+			perror("send_klog poll failed");
 			close(fd);
 			return -1;
 		}
@@ -134,7 +136,7 @@ static int send_klog(tcp_socket_t *restrict sock) {
 		ssize_t nread = read(fd, klogbuf, (n >= sizeof(klogbuf)) ? sizeof(klogbuf) : n);
 		if (nread == -1) {
 			// error occured
-			perror("read failed");
+			perror("send_klog read failed");
 			close(fd);
 			return -1;
 		}

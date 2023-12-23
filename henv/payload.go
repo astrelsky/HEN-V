@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -220,6 +221,18 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 		return
 	}
 
+	reconnect := func() {
+		ln.Close()
+		log.Println("reconnecting")
+		ln, err = cfg.Listen(ctx, "tcp", PAYLOAD_ADDRESS)
+		if err != nil {
+			// NO PAYLOADS FOR YOU
+			log.Println(err)
+			log.Println("payload server failed to start")
+			return
+		}
+	}
+
 	for {
 		select {
 		case _, _ = <-ctx.Done():
@@ -227,7 +240,14 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 		default:
 			conn, err := ln.Accept()
 			if err != nil {
-				log.Println(err)
+				err2 := errors.Unwrap(err)
+				if err2.Error() == "accept4: errno 163" {
+					// entering rest mode
+					time.Sleep(time.Second)
+					reconnect()
+				} else {
+					log.Println(err)
+				}
 				continue
 			}
 

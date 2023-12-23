@@ -700,11 +700,7 @@ func (ldr *ElfLoader) load() error {
 				log.Println(err)
 				return err
 			}
-			offset, err := ldr.toFileOffset(int(phdr.Offset))
-			if err != nil {
-				log.Println(err)
-				return err
-			}
+			offset := int(phdr.Offset)
 			_, err = UserlandCopyin(ldr.pid, vaddr, ldr.elf.data[offset:offset+int(phdr.Filesz)])
 			if err != nil {
 				log.Println(err)
@@ -990,7 +986,6 @@ func readElfData(r io.ReadCloser) (data []byte, err error) {
 		return
 	}
 
-	data = buf.Bytes()
 	return
 }
 

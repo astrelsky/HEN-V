@@ -48,8 +48,6 @@ func KernelCopyin(kdest uintptr, p []byte) (n int, err error) {
 }
 
 func KernelCopyoutString(ksrc uintptr) (s string, err error) {
-	kmemMtx.Lock()
-	defer kmemMtx.Unlock()
 	const BUF_SIZE = 16
 	buf := make([]byte, BUF_SIZE)
 	pos := 0
@@ -63,7 +61,7 @@ func KernelCopyoutString(ksrc uintptr) (s string, err error) {
 		buf = append(buf, make([]byte, BUF_SIZE)...)
 		pos += BUF_SIZE
 	}
-	panic("unreachable")
+	return
 }
 
 func KernelCopyoutUnsafe(ksrc uintptr, dst unsafe.Pointer, length int) (int, error) {

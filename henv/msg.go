@@ -19,7 +19,7 @@ type InternalAppMessage struct {
 	sender      uint32
 	msgType     uint32
 	payload     [INTERNAL_APP_MESSAGE_PAYLOAD_SIZE]byte
-	payloadSize uint32
+	payloadSize uint64
 	timestamp   uint64
 }
 
@@ -140,11 +140,7 @@ func (hen *HenV) processAppMessages(ctx context.Context) {
 				appid: AppId(internalMessageBuffer.sender),
 				hen:   hen,
 			}
-			err = hen.handleMsg(&msg)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
+			hen.msgChannel <- &msg
 		}
 	}
 }

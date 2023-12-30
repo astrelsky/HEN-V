@@ -43,7 +43,10 @@ func (hen *HenV) handleMsg(msg *AppMessage) (err error) {
 		handler := readAppLaunchPrefixHandler(msg.rw, uint32(msg.sender), msg.payload)
 		err = hen.removePrefixHandler(handler.prefix, handler.id)
 	case HENV_MSG_TYPE_REGISTER_LAUNCH_LISTENER:
-		handler := readAppLaunchListener(msg.rw, msg.sender, msg.payload)
+		handler := AppLaunchListener{
+			AppMessageReadWriter: msg.rw,
+			id:                   msg.sender,
+		}
 		err = hen.addLaunchListener(handler)
 	case HENV_MSG_TYPE_UNREGISTER_LAUNCH_LISTENER:
 		err = hen.removeLaunchListener(msg.sender)
@@ -79,31 +82,10 @@ func replyFailed(rw AppMessageReadWriter, msgType AppMessageType, err error) err
 }
 
 func readAppLaunchPrefixHandler(rw AppMessageReadWriter, id uint32, buf []byte) AppLaunchPrefixHandler {
-	var name string
-	i := bytes.IndexByte(buf, 0)
-	if i != -1 {
-		name = string(buf[:i])
-		buf = buf[i:]
-	}
 	prefix := string(buf[:PREFIX_LENGTH])
 	return AppLaunchPrefixHandler{
 		AppMessageReadWriter: rw,
-		Name:                 name,
 		prefix:               prefix,
-		id:                   id,
-	}
-}
-
-func readAppLaunchListener(rw AppMessageReadWriter, id uint32, buf []byte) AppLaunchListener {
-	var name string
-	i := bytes.IndexByte(buf, 0)
-	if i != -1 {
-		name = string(buf[:i])
-		buf = buf[i:]
-	}
-	return AppLaunchListener{
-		AppMessageReadWriter: rw,
-		Name:                 name,
 		id:                   id,
 	}
 }

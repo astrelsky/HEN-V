@@ -90,13 +90,11 @@ type HenV struct {
 
 type AppLaunchListener struct {
 	AppMessageReadWriter
-	Name string
-	id   uint32
+	id uint32
 }
 
 type AppLaunchPrefixHandler struct {
 	AppMessageReadWriter
-	Name   string
 	prefix string
 	id     uint32
 }
@@ -176,6 +174,7 @@ func NewHenV() (HenV, context.Context) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	return HenV{
+		prefixHandlers:   map[string]AppLaunchPrefixHandler{},
 		launchListeners:  []AppLaunchListener{},
 		payloadChannel:   make(chan int), // unbuffered
 		listenerChannel:  make(chan int32, CHANNEL_BUFFER_SIZE),
@@ -232,8 +231,9 @@ func (hen *HenV) addPrefixHandler(handler AppLaunchPrefixHandler) error {
 	defer hen.prefixHandlerMtx.Unlock()
 	currentHandler, ok := hen.prefixHandlers[handler.prefix]
 	if ok {
-		return fmt.Errorf("Prefix %s is already being handled by %s", handler.prefix, currentHandler.Name)
+		return fmt.Errorf("Prefix %s is already being handled by %#x", handler.prefix, currentHandler.id)
 	}
+	log.Printf("adding prefix handler for prefix %s\n", handler.prefix)
 	hen.prefixHandlers[handler.prefix] = handler
 	return nil
 }
@@ -303,7 +303,7 @@ func (hen *HenV) homebrewHandler(ctx context.Context) {
 		case _, _ = <-ctx.Done():
 			return
 		case info := <-hen.homebrewChannel:
-			log.Println("received hombrew info")
+			log.Println("received homebrew info")
 			err := handleHomebrewLaunch(hen, info.tracer, info.fun, info.args)
 			if err != nil {
 				log.Println(err)
@@ -395,8 +395,9 @@ func (hen *HenV) launchHandler(ctx context.Context) {
 
 func (hen *HenV) hasPrefixHandler(prefix string) bool {
 	hen.prefixHandlerMtx.RLock()
-	defer hen.prefixHandlerMtx.Unlock()
+	defer hen.prefixHandlerMtx.RUnlock()
 	_, ok := hen.prefixHandlers[prefix[:PREFIX_LENGTH]]
+	// FIXME: need to check if the handler is still alive
 	return ok
 }
 

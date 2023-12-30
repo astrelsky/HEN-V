@@ -394,7 +394,7 @@ func (hen *HenV) launchHandler(ctx context.Context) {
 func (hen *HenV) hasPrefixHandler(prefix string) bool {
 	hen.prefixHandlerMtx.RLock()
 	defer hen.prefixHandlerMtx.Unlock()
-	_, ok := hen.prefixHandlers[prefix]
+	_, ok := hen.prefixHandlers[prefix[:PREFIX_LENGTH]]
 	return ok
 }
 

@@ -387,7 +387,7 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 
 	hen.launchChannel <- LaunchedAppInfo{pid: tracer.pid, titleid: titleid}
 
-	if hen.hasPrefixHandler(titleid[:PREFIX_LENGTH]) {
+	if hen.hasPrefixHandler(titleid) {
 		return
 	}
 

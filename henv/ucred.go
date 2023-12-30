@@ -15,13 +15,11 @@ const (
 )
 
 var (
-	currentAuthIdMtx *sync.Mutex
+	currentAuthIdMtx sync.Mutex
 	_currentUcred    KUcred
 )
 
 func (u KUcred) RunWithAuthId(authid uint64, callback func()) {
-	currentAuthIdMtx.Lock()
-	defer currentAuthIdMtx.Unlock()
 	addr := uintptr(u) + _UCRED_AUTHID_OFFSET
 	orig := kread64(addr)
 	kwrite64(addr, authid)
@@ -105,5 +103,17 @@ func SetCurrentAuthId(value uint64) {
 }
 
 func RunWithCurrentAuthId(authid uint64, callback func()) {
+	currentAuthIdMtx.Lock()
+	defer currentAuthIdMtx.Unlock()
 	GetCurrentUcred().RunWithAuthId(authid, callback)
+}
+
+func (hen *HenV) RunWithCurrentAuthId(authid uint64, callback func()) {
+	hen.currentAuthIdMtx.Lock()
+	defer hen.currentAuthIdMtx.Unlock()
+	addr := uintptr(GetCurrentUcred()) + _UCRED_AUTHID_OFFSET
+	orig := kread64(addr)
+	kwrite64(addr, authid)
+	defer kwrite64(addr, orig)
+	callback()
 }

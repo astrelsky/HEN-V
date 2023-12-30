@@ -66,25 +66,6 @@ type Payload struct {
 	pid  int
 }
 
-type SharedGlobals struct {
-	kmemMtx          sync.Mutex
-	currentAuthIdMtx sync.Mutex
-}
-
-var globals SharedGlobals
-
-func InitGlobals(globals *SharedGlobals) {
-	kmemMtx = &globals.kmemMtx
-	currentAuthIdMtx = &globals.currentAuthIdMtx
-	_currentProc = GetProc(getpid())
-	_currentUcred = GetCurrentProc().GetUcred()
-}
-
-func init() {
-	// init in plugins is only called for modules not yet in the program
-	InitGlobals(&globals)
-}
-
 type HenV struct {
 	wg               sync.WaitGroup
 	listenerMtx      sync.RWMutex
@@ -103,6 +84,8 @@ type HenV struct {
 	payloads         [15]Payload
 	cancel           context.CancelFunc
 	cancelChannel    chan os.Signal
+	currentAuthIdMtx *sync.Mutex
+	kmemMtx          *sync.Mutex
 }
 
 type AppLaunchListener struct {
@@ -193,16 +176,18 @@ func NewHenV() (HenV, context.Context) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	return HenV{
-		launchListeners: []AppLaunchListener{},
-		payloadChannel:  make(chan int), // unbuffered
-		listenerChannel: make(chan int32, CHANNEL_BUFFER_SIZE),
-		launchChannel:   make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
-		homebrewChannel: make(chan HomebrewLaunchInfo), // unbuffered
-		elfChannel:      make(chan ElfLoadInfo),        // unbuffered
-		msgChannel:      make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
-		sendMsgChannel:  make(chan *OutgoingAppMessage, CHANNEL_BUFFER_SIZE),
-		cancel:          cancel,
-		cancelChannel:   c,
+		launchListeners:  []AppLaunchListener{},
+		payloadChannel:   make(chan int), // unbuffered
+		listenerChannel:  make(chan int32, CHANNEL_BUFFER_SIZE),
+		launchChannel:    make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
+		homebrewChannel:  make(chan HomebrewLaunchInfo), // unbuffered
+		elfChannel:       make(chan ElfLoadInfo),        // unbuffered
+		msgChannel:       make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
+		sendMsgChannel:   make(chan *OutgoingAppMessage, CHANNEL_BUFFER_SIZE),
+		cancel:           cancel,
+		cancelChannel:    c,
+		currentAuthIdMtx: &currentAuthIdMtx,
+		kmemMtx:          &kmemMtx,
 	}, ctx
 }
 

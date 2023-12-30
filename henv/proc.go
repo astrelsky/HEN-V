@@ -25,7 +25,7 @@ type KFd uintptr
 type KFdTbl uintptr
 
 func (p KProc) GetParent() KProc {
-	return KProc(kread64(uintptr(p) + 0xe0))
+	return KProc(Kread64(uintptr(p) + 0xe0))
 }
 
 var _currentProc KProc
@@ -35,11 +35,11 @@ func GetSyscoreProc() KProc {
 }
 
 func _getFirstProc() KProc {
-	return KProc(kread64(GetKernelBase() + GetAllprocOffset()))
+	return KProc(Kread64(GetKernelBase() + GetAllprocOffset()))
 }
 
 func (proc KProc) next() KProc {
-	return KProc(kread64(uintptr(proc)))
+	return KProc(Kread64(uintptr(proc)))
 }
 
 func GetProc(pid int) KProc {
@@ -59,51 +59,51 @@ func GetCurrentProc() KProc {
 }
 
 func (proc KProc) GetUcred() KUcred {
-	return KUcred(kread64(uintptr(proc) + _PROC_UCRED_OFFSET))
+	return KUcred(Kread64(uintptr(proc) + _PROC_UCRED_OFFSET))
 }
 
 func (proc KProc) GetPid() int {
-	return int(kread32(uintptr(proc) + _PROC_PID_OFFSET))
+	return int(Kread32(uintptr(proc) + _PROC_PID_OFFSET))
 }
 
 func (proc KProc) GetFd() KFd {
-	return KFd(kread64(uintptr(proc) + _PROC_FD_OFFSET))
+	return KFd(Kread64(uintptr(proc) + _PROC_FD_OFFSET))
 }
 
 func (fd KFd) GetFdTbl() KFdTbl {
-	return KFdTbl(kread64(uintptr(fd)))
+	return KFdTbl(Kread64(uintptr(fd)))
 }
 
 func (fd KFd) GetRdir() uint64 {
-	return kread64(uintptr(fd) + _FD_RDIR_OFFSET)
+	return Kread64(uintptr(fd) + _FD_RDIR_OFFSET)
 }
 
 func (fd KFd) GetJdir() uint64 {
-	return kread64(uintptr(fd) + _FD_JDIR_OFFSET)
+	return Kread64(uintptr(fd) + _FD_JDIR_OFFSET)
 }
 
 func (fd KFd) SetRdir(value uint64) {
-	kwrite64(uintptr(fd)+_FD_RDIR_OFFSET, value)
+	Kwrite64(uintptr(fd)+_FD_RDIR_OFFSET, value)
 }
 
 func (fd KFd) SetJdir(value uint64) {
-	kwrite64(uintptr(fd)+_FD_JDIR_OFFSET, value)
+	Kwrite64(uintptr(fd)+_FD_JDIR_OFFSET, value)
 }
 
 func (tbl KFdTbl) GetFile(fd int) uintptr {
 	fp := uintptr(tbl) + (uintptr(fd) * _FILEDESCENT_LENGTH) + 8
-	return uintptr(kread64(fp))
+	return uintptr(Kread64(fp))
 }
 
 func (tbl KFdTbl) GetFileData(fd int) uint64 {
-	return kread64(tbl.GetFile(fd))
+	return Kread64(tbl.GetFile(fd))
 }
 
 func (proc KProc) Jailbreak(escapeSandbox bool) {
 	ucred := proc.GetUcred()
 	fd := proc.GetFd()
 	kernel_base := GetKernelBase()
-	root := kread64(kernel_base + GetRootVnodeOffset())
+	root := Kread64(kernel_base + GetRootVnodeOffset())
 
 	attr_store := []byte{0x80, 0, 0, 0, 0, 0, 0, 0}
 
@@ -125,7 +125,7 @@ func (proc KProc) Jailbreak(escapeSandbox bool) {
 }
 
 func (proc KProc) GetSharedObject() SharedObject {
-	return SharedObject(kread64(uintptr(proc) + _PROC_SHARED_OBJECT_OFFSET))
+	return SharedObject(Kread64(uintptr(proc) + _PROC_SHARED_OBJECT_OFFSET))
 }
 
 func (proc KProc) GetLib(handle int) SharedLib {
@@ -147,7 +147,7 @@ func (proc KProc) SetName(name string) {
 }
 
 func (proc KProc) GetPath() string {
-	addr := kread64(uintptr(proc) + _PROC_PATH_OFFSET)
+	addr := Kread64(uintptr(proc) + _PROC_PATH_OFFSET)
 	if addr == 0 {
 		return ""
 	}

@@ -50,19 +50,19 @@ type RtldSection struct {
 }
 
 func (lib SharedLib) GetImageBase() uintptr {
-	return uintptr(kread64(uintptr(lib) + _SHARED_LIB_IMAGEBASE_OFFSET))
+	return uintptr(Kread64(uintptr(lib) + _SHARED_LIB_IMAGEBASE_OFFSET))
 }
 
 func (lib SharedLib) next() SharedLib {
-	return SharedLib(kread64(uintptr(lib)))
+	return SharedLib(Kread64(uintptr(lib)))
 }
 
 func (lib SharedLib) Handle() int {
-	return int(kread32(uintptr(lib) + _LIB_HANDLE_OFFSET))
+	return int(Kread32(uintptr(lib) + _LIB_HANDLE_OFFSET))
 }
 
 func (lib SharedLib) GetMetaData() SharedLibMetaData {
-	return SharedLibMetaData(kread64(uintptr(lib) + _SHARED_LIB_METADATA_OFFSET))
+	return SharedLibMetaData(Kread64(uintptr(lib) + _SHARED_LIB_METADATA_OFFSET))
 }
 
 func (lib SharedLib) GetAddress(nid Nid) uintptr {
@@ -118,7 +118,7 @@ func getSymbolAddress(helper *RtldPltHelper, imagebase uintptr, nid Nid) uintptr
 }
 
 func (obj SharedObject) GetLib(handle int) SharedLib {
-	for lib := SharedLib(kread64(uintptr(obj))); lib != 0; lib = lib.next() {
+	for lib := SharedLib(Kread64(uintptr(obj))); lib != 0; lib = lib.next() {
 		currentHandle := lib.Handle()
 		if currentHandle == -1 {
 			// read failed

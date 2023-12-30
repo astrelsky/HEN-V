@@ -17,25 +17,25 @@ func KernelCopyout(ksrc uintptr, p []byte) (n int, err error) {
 	return syscall.KernelCopyout(uintptr(ksrc), p)
 }
 
-func kread64(ksrc uintptr) uint64 {
+func Kread64(ksrc uintptr) uint64 {
 	buf := make([]byte, 8)
 	KernelCopyout(ksrc, buf)
 	return binary.LittleEndian.Uint64(buf)
 }
 
-func kread32(ksrc uintptr) uint32 {
+func Kread32(ksrc uintptr) uint32 {
 	buf := make([]byte, 4)
 	KernelCopyout(ksrc, buf)
 	return binary.LittleEndian.Uint32(buf)
 }
 
-func kwrite64(ksrc uintptr, value uint64) {
+func Kwrite64(ksrc uintptr, value uint64) {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, value)
 	KernelCopyin(ksrc, buf)
 }
 
-func kwrite32(ksrc uintptr, value uint32) {
+func Kwrite32(ksrc uintptr, value uint32) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, value)
 	KernelCopyin(ksrc, buf)
@@ -78,25 +78,25 @@ func (hen *HenV) KernelCopyout(ksrc uintptr, p []byte) (n int, err error) {
 	return syscall.KernelCopyout(uintptr(ksrc), p)
 }
 
-func (hen *HenV) kread64(ksrc uintptr) uint64 {
+func (hen *HenV) Kread64(ksrc uintptr) uint64 {
 	buf := make([]byte, 8)
 	hen.KernelCopyout(ksrc, buf)
 	return binary.LittleEndian.Uint64(buf)
 }
 
-func (hen *HenV) kread32(ksrc uintptr) uint32 {
+func (hen *HenV) Kread32(ksrc uintptr) uint32 {
 	buf := make([]byte, 4)
 	hen.KernelCopyout(ksrc, buf)
 	return binary.LittleEndian.Uint32(buf)
 }
 
-func (hen *HenV) kwrite64(ksrc uintptr, value uint64) {
+func (hen *HenV) Kwrite64(ksrc uintptr, value uint64) {
 	buf := make([]byte, 8)
 	binary.LittleEndian.PutUint64(buf, value)
 	hen.KernelCopyin(ksrc, buf)
 }
 
-func (hen *HenV) kwrite32(ksrc uintptr, value uint32) {
+func (hen *HenV) Kwrite32(ksrc uintptr, value uint32) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, value)
 	hen.KernelCopyin(ksrc, buf)

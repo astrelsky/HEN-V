@@ -214,6 +214,12 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 				return
 			}
 			hen.setPayloadPid(info.payload, info.pid)
+			proc := GetProc(info.pid)
+			if proc == 0 {
+				log.Printf("Failed to get kernel proc for pid %v\n", info.pid)
+				return
+			}
+			proc.SetName(fmt.Sprintf("Payload %v", info.payload))
 		}()
 	}
 }

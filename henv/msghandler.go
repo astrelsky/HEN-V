@@ -52,7 +52,8 @@ func (hen *HenV) handleMsg(msg *AppMessage) (err error) {
 	case HENV_MSG_TYPE_KILL:
 		panic("killed as requested")
 	case HENV_MSG_TYPE_GET_PAYLOAD_NUMBER:
-		err = replyPayloadNumberRequest(msg.rw)
+		replyPayloadNumberRequest(msg.rw)
+		return
 	default:
 		err = fmt.Errorf("unknown message type %v", msg.msgType)
 	}
@@ -107,13 +108,16 @@ func readAppLaunchListener(rw AppMessageReadWriter, id uint32, buf []byte) AppLa
 	}
 }
 
-func replyPayloadNumberRequest(rw AppMessageReadWriter) (err error) {
+func replyPayloadNumberRequest(rw AppMessageReadWriter) {
 	p, ok := rw.(*LocalProcess)
 	if !ok {
 		log.Println(ErrNonPayloadNumRequester)
-		return ErrNonPayloadNumRequester
+		msg := MsgBuffer{}
+		msg.PutUint16(0xffff)
+		msg.PutString(ErrNonPayloadNumRequester.Error())
+		rw.WriteMessage(HENV_MSG_TYPE_GET_PAYLOAD_NUMBER, msg.Bytes())
+		return
 	}
 	msg := unsafe.Slice((*byte)(unsafe.Pointer(&p.num)), 2)
 	rw.WriteMessage(HENV_MSG_TYPE_GET_PAYLOAD_NUMBER, msg)
-	return
 }

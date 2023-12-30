@@ -1,6 +1,8 @@
 package henv
 
-import "io"
+import (
+	"io"
+)
 
 type ByteBuilder struct {
 	buf []byte

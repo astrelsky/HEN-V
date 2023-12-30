@@ -29,6 +29,32 @@ type LocalProcess struct {
 	num int
 }
 
+func (p *LocalProcess) WriteMessage(msgType AppMessageType, msg []byte) (err error) {
+	emsg := ExternalAppMessage{
+		sender:      uint32(getpid()),
+		msgType:     uint32(msgType),
+		payloadSize: uint32(len(msg)),
+	}
+	const length = unsafe.Sizeof(emsg)
+	n, err := p.Write(unsafe.Slice((*byte)(unsafe.Pointer(&emsg)), length))
+	if n < int(length) {
+		err = fmt.Errorf("only wrote %v out of %v bytes\n", n, length)
+	}
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	n, err = p.Write(msg)
+	if n < len(msg) {
+		err = fmt.Errorf("only wrote %v out of %v bytes\n", n, len(msg))
+	}
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	return nil
+}
+
 type ProcessSocket struct {
 	mtx sync.Mutex
 	net.Conn

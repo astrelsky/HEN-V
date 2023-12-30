@@ -3,10 +3,8 @@ package henv
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"sync"
-	"syscall"
 	"time"
 	"unsafe"
 )
@@ -28,13 +26,13 @@ type InternalAppMessage struct {
 type AppMessageType uint32
 
 const (
-	BREW_MSG_TYPE_REGISTER_PREFIX_HANDLER    AppMessageType = 0x1000000
-	BREW_MSG_TYPE_UNREGISTER_PREFIX_HANDLER  AppMessageType = 0x1000001
-	BREW_MSG_TYPE_REGISTER_LAUNCH_LISTENER   AppMessageType = 0x1000002
-	BREW_MSG_TYPE_UNREGISTER_LAUNCH_LISTENER AppMessageType = 0x1000003
-	BREW_MSG_TYPE_APP_LAUNCHED               AppMessageType = 0x1000004
-	BREW_MSG_TYPE_KILL                       AppMessageType = 0x1000005
-	BREW_MSG_TYPE_GET_PAYLOAD_NUMBER         AppMessageType = 0x1000006
+	HENV_MSG_TYPE_REGISTER_PREFIX_HANDLER    AppMessageType = 0x1000000
+	HENV_MSG_TYPE_UNREGISTER_PREFIX_HANDLER  AppMessageType = 0x1000001
+	HENV_MSG_TYPE_REGISTER_LAUNCH_LISTENER   AppMessageType = 0x1000002
+	HENV_MSG_TYPE_UNREGISTER_LAUNCH_LISTENER AppMessageType = 0x1000003
+	HENV_MSG_TYPE_APP_LAUNCHED               AppMessageType = 0x1000004
+	HENV_MSG_TYPE_KILL                       AppMessageType = 0x1000005
+	HENV_MSG_TYPE_GET_PAYLOAD_NUMBER         AppMessageType = 0x1000006
 )
 
 type AppLaunchedMessage struct {
@@ -46,12 +44,27 @@ type AppLaunchedMessage struct {
 // unknown, for now just use 0
 type AppMessagingFlags uint32
 
+type AppMessageReadWriter interface {
+	WriteMessage(msgType AppMessageType, msg []byte) (err error)
+}
+
 type AppMessage struct {
 	sender    uint32
 	msgType   AppMessageType
 	payload   []byte
 	timestamp time.Time
-	rw        io.ReadWriter
+	rw        AppMessageReadWriter
+}
+
+type OutgoingAppMessage struct {
+	appid   AppId
+	msgType AppMessageType
+	payload []byte
+}
+
+type AppMessageWriter struct {
+	appid AppId
+	hen   *HenV
 }
 
 type ExternalAppMessage struct {
@@ -67,7 +80,7 @@ var internalMessageBufferMtx sync.Mutex
 
 func NewAppLaunchedMessage(pid int32, titleid string) AppLaunchedMessage {
 	return AppLaunchedMessage{
-		msgType: BREW_MSG_TYPE_APP_LAUNCHED,
+		msgType: HENV_MSG_TYPE_APP_LAUNCHED,
 		pid:     pid,
 		titleid: *(*[TITLEID_LENGTH]byte)([]byte(titleid)),
 	}
@@ -105,6 +118,67 @@ func SceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, fla
 	return nil
 }
 
+func (hen *HenV) processAppMessages(ctx context.Context) {
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := ctx.Done()
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			msg, err := SceAppMessagingReceiveMsg()
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			msg.rw = &AppMessageWriter{
+				appid: AppId(internalMessageBuffer.sender),
+				hen:   hen,
+			}
+			err = hen.handleMsg(&msg)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+		}
+	}
+}
+
+func (w *AppMessageWriter) WriteMessage(msgType AppMessageType, data []byte) (err error) {
+	msg := OutgoingAppMessage{
+		appid:   w.appid,
+		msgType: msgType,
+		payload: data,
+	}
+	w.hen.sendMsgChannel <- &msg
+	return nil
+}
+
+func (hen *HenV) runMessageSender(ctx context.Context) {
+	defer func() {
+		hen.wg.Done()
+		log.Println("Done")
+	}()
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := ctx.Done()
+	for {
+		select {
+		case <-done:
+			return
+		case msg := <-hen.sendMsgChannel:
+			SceAppMessagingSendMsg(msg.appid, msg.msgType, msg.payload, 0)
+		}
+	}
+}
+
 func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 	defer func() {
 		hen.wg.Done()
@@ -139,40 +213,12 @@ func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 				log.Println(err)
 				return
 			}
-			log.Printf("received message from payload %v\n", p.num)
-			if AppMessageType(emsg.msgType) == BREW_MSG_TYPE_GET_PAYLOAD_NUMBER {
-				emsg = ExternalAppMessage{
-					sender:      uint32(syscall.Getpid()),
-					msgType:     uint32(BREW_MSG_TYPE_GET_PAYLOAD_NUMBER),
-					payloadSize: 2,
-				}
-				n, err = p.Write(unsafe.Slice((*byte)(unsafe.Pointer(&emsg)), length))
-				if n < int(length) {
-					log.Printf("only wrote %v out of %v bytes\n", n, length)
-					return
-				}
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				num := uint16(p.num)
-				n, err = p.Write(unsafe.Slice((*byte)(unsafe.Pointer(&num)), 2))
-				if n < 2 {
-					log.Printf("only wrote %v out of %v bytes\n", n, 2)
-					return
-				}
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				continue
-			}
 			msg := &AppMessage{
 				sender:    emsg.sender,
 				msgType:   AppMessageType(emsg.msgType),
 				payload:   make([]byte, emsg.payloadSize),
 				timestamp: time.Now(),
-				rw:        p,
+				rw:        &p,
 			}
 			n, err = p.Read(msg.payload)
 			if n < int(emsg.payloadSize) {

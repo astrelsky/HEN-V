@@ -385,22 +385,24 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 		return
 	}
 
+	hen.launchChannel <- LaunchedAppInfo{pid: tracer.pid, titleid: titleid}
+
 	if hen.hasPrefixHandler(titleid[:PREFIX_LENGTH]) {
-		hen.prefixChannel <- LaunchedAppInfo{pid: tracer.pid, titleid: titleid}
-	} else {
-		fp, err1 := os.Open("/system_ex/app/" + titleid + "/homebrew.elf")
-		if err1 != nil {
-			err = err1
-			log.Println(err)
-			return
-		}
-		// we load it
-		hen.elfChannel <- ElfLoadInfo{
-			pid:     tracer.pid,
-			tracer:  nil, // detach and reattach
-			reader:  fp,
-			payload: -1,
-		}
+		return
+	}
+
+	fp, err1 := os.Open("/system_ex/app/" + titleid + "/homebrew.elf")
+	if err1 != nil {
+		err = err1
+		log.Println(err)
+		return
+	}
+	// we load it
+	hen.elfChannel <- ElfLoadInfo{
+		pid:     tracer.pid,
+		tracer:  nil, // detach and reattach
+		reader:  fp,
+		payload: -1,
 	}
 
 	return

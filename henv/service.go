@@ -11,8 +11,8 @@ var (
 	libSceSystemService             = &syscall.LazyPrx{Name: "libSceSystemService.sprx"}
 	sceSystemServiceGetAppStatus    = libSceSystemService.NewProc("sceSystemServiceGetAppStatus")
 	sceSystemServiceAddLocalProcess = libSceSystemService.NewProc("sceSystemServiceAddLocalProcess")
-	sceAppMessagingSendMsg          = libSceSystemService.NewProc("sceAppMessagingSendMsg")
-	sceAppMessagingReceiveMsg       = libSceSystemService.NewProc("sceAppMessagingReceiveMsg")
+	sceAppMessagingSendMsgFun       = libSceSystemService.NewProc("sceAppMessagingSendMsg")
+	sceAppMessagingReceiveMsgFun    = libSceSystemService.NewProc("sceAppMessagingReceiveMsg")
 )
 
 func init() {
@@ -30,10 +30,10 @@ func init() {
 	if addr == 0 {
 		panic("failed to resolve sceAppMessagingSendMsg")
 	}
-	sceAppMessagingSendMsg.SetAddr(addr)
+	sceAppMessagingSendMsgFun.SetAddr(addr)
 	addr = lib.GetAddress(SCE_APP_MESSAGING_RECEIVE_MSG_NID)
 	if addr == 0 {
 		panic("failed to resolve sceAppMessagingReceiveMsg")
 	}
-	sceAppMessagingReceiveMsg.SetAddr(addr)
+	sceAppMessagingReceiveMsgFun.SetAddr(addr)
 }

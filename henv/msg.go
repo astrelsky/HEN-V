@@ -86,10 +86,10 @@ func NewAppLaunchedMessage(pid int32, titleid string) AppLaunchedMessage {
 	}
 }
 
-func SceAppMessagingReceiveMsg() (AppMessage, error) {
+func sceAppMessagingReceiveMsg() (AppMessage, error) {
 	internalMessageBufferMtx.Lock()
 	defer internalMessageBufferMtx.Unlock()
-	res, _, _ := sceAppMessagingReceiveMsg.Call(uintptr(unsafe.Pointer(&internalMessageBuffer)))
+	res, _, _ := sceAppMessagingReceiveMsgFun.Call(uintptr(unsafe.Pointer(&internalMessageBuffer)))
 	if int(res) < 0 {
 		return AppMessage{}, fmt.Errorf("sceAppMessagingReceiveMsg failed %v", int(res))
 	}
@@ -104,8 +104,8 @@ func SceAppMessagingReceiveMsg() (AppMessage, error) {
 	return msg, nil
 }
 
-func SceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, flags AppMessagingFlags) error {
-	res, _, _ := sceAppMessagingSendMsg.Call(
+func sceAppMessagingSendMsg(appId AppId, msgType AppMessageType, msg []byte, flags AppMessagingFlags) error {
+	res, _, _ := sceAppMessagingSendMsgFun.Call(
 		uintptr(appId),
 		uintptr(msgType),
 		uintptr(unsafe.Pointer(&msg[0])),
@@ -131,7 +131,7 @@ func (hen *HenV) processAppMessages(ctx context.Context) {
 		case <-done:
 			return
 		default:
-			msg, err := SceAppMessagingReceiveMsg()
+			msg, err := sceAppMessagingReceiveMsg()
 			if err != nil {
 				log.Println(err)
 				continue
@@ -174,7 +174,7 @@ func (hen *HenV) runMessageSender(ctx context.Context) {
 		case <-done:
 			return
 		case msg := <-hen.sendMsgChannel:
-			SceAppMessagingSendMsg(msg.appid, msg.msgType, msg.payload, 0)
+			sceAppMessagingSendMsg(msg.appid, msg.msgType, msg.payload, 0)
 		}
 	}
 }

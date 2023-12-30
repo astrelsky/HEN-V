@@ -139,10 +139,7 @@ func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err 
 
 	hen.wg.Add(1)
 	go func() {
-		defer func() {
-			hen.wg.Done()
-			log.Println("Done")
-		}()
+		defer hen.wg.Done()
 
 		p, fd, err := newLocalProcess(num)
 

@@ -16,7 +16,7 @@ const (
 
 var (
 	currentAuthIdMtx sync.Mutex
-	_currentUcred    KUcred
+	getCurrentUcred  = sync.OnceValue(func() KUcred { return GetCurrentProc().GetUcred() })
 )
 
 func (u KUcred) RunWithAuthId(authid uint64, callback func()) {
@@ -91,7 +91,7 @@ func (u KUcred) SetSceCaps(v1 uint64, v2 uint64) {
 }
 
 func GetCurrentUcred() KUcred {
-	return _currentUcred
+	return getCurrentUcred()
 }
 
 func GetCurrentAuthId() uint64 {

@@ -210,7 +210,7 @@ func (hen *HenV) Close() error {
 }
 
 func (hen *HenV) Start(ctx context.Context) {
-	hen.wg.Add(7)
+	hen.wg.Add(9)
 
 	for i := range hen.payloads {
 		hen.payloads[i].pid = -1
@@ -222,6 +222,8 @@ func (hen *HenV) Start(ctx context.Context) {
 	go hen.elfLoadHandler(ctx)
 	go hen.runPayloadServer(ctx)
 	go hen.runMessageSender(ctx)
+	go hen.msgHandler(ctx)
+	go hen.processAppMessages(ctx)
 	go startSyscoreIpc(hen, ctx)
 }
 
@@ -429,7 +431,6 @@ func (hen *HenV) msgHandler(ctx context.Context) {
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer close(hen.msgChannel)
 	for {
 		select {
 		case _, _ = <-ctx.Done():

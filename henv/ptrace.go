@@ -147,7 +147,7 @@ func (tracer *Tracer) ptrace(request int, addr uintptr, data int) (err error) {
 			err = e1
 		}
 	}
-	GetCurrentUcred().RunWithAuthId(PTRACE_ID, callback)
+	RunWithCurrentAuthId(PTRACE_ID, callback)
 	return
 }
 

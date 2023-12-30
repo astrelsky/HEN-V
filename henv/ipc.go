@@ -142,20 +142,33 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	for {
-		// FIXME: this should lock the os thread until it has replied so the go runtime cant evict it
+	inflight := 0
+	defer func() {
+		if inflight != 0 {
+			log.Println("killing launched process")
+			syscall.Kill(inflight, syscall.SIGKILL)
+		}
+	}()
 
+	for {
 		var cmd IpcResult
 		const PACKET_SIZE = unsafe.Sizeof(cmd)
 		buf := unsafe.Slice((*byte)(unsafe.Pointer(&cmd)), PACKET_SIZE)
 		n, err := conn.Read(buf)
-		if err != nil {
-			log.Println(err)
-			conn = reconnector()
-			continue
-		}
 		if n != int(PACKET_SIZE) {
 			log.Printf("syscore ipc only read %v out of %v bytes", n, PACKET_SIZE)
+			if err != nil {
+				log.Println(err)
+			}
+			conn = reconnector()
+			if n >= 8 {
+				syscall.Kill(int(cmd.pid), syscall.SIGKILL)
+			}
+			continue
+		}
+		if err != nil {
+			log.Println(err)
+			syscall.Kill(int(cmd.pid), syscall.SIGKILL)
 			conn = reconnector()
 			continue
 		}
@@ -173,9 +186,12 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 			continue
 		}
 
+		inflight = int(cmd.pid)
+
 		tracer, err := NewTracer(int(cmd.pid))
 		if err != nil {
 			log.Println(err)
+			inflight = 0
 			// we need to kill the process or else it'll be stuck in an infinite loop
 			err = syscall.Kill(int(cmd.pid), syscall.SIGKILL)
 			if err != nil {
@@ -188,6 +204,7 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 		log.Println("tracer attached, sending info over channel")
 
 		hen.homebrewChannel <- HomebrewLaunchInfo{tracer: tracer, fun: cmd.fun, args: cmd.args}
+		inflight = 0
 	}
 
 }

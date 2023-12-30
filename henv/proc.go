@@ -2,6 +2,7 @@ package henv
 
 import (
 	"log"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -146,8 +147,10 @@ func GetProc(pid int) KProc {
 	return 0
 }
 
+var getCurrentProc = sync.OnceValue(func() KProc { return GetProc(getpid()) })
+
 func GetCurrentProc() KProc {
-	return _currentProc
+	return getCurrentProc()
 }
 
 func (proc KProc) GetUcred() KUcred {

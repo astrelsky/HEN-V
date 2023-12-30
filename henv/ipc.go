@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	LOOB_BUILDER_SIZE     = 21
+	LOOB_BUILDER_SIZE     = 45
 	ENTRYPOINT_OFFSET     = 0x70
 	IPC_PATH              = "/system_tmp/IPC"
 	USLEEP_NID        Nid = "QcteRwbsnV0"
+	KILL_NID          Nid = "W0xkN0+ZkCE"
 )
 
 var (
@@ -25,6 +26,7 @@ var (
 	ErrNoLibKernel   = errors.New("failed to get libkernel")
 	ErrNoEboot       = errors.New("failed to get eboot")
 	ErrNoUsleep      = errors.New("failed to find usleep")
+	ErrNoKill        = errors.New("failed to find kill")
 	ErrBadImageBase  = errors.New("invalid image base")
 	ErrCopyLoop      = errors.New("failed to copyin usleep loop")
 	ErrUnexpectedRip = errors.New("unexpected rip value, something went wrong")
@@ -49,10 +51,18 @@ func NewLoopBuilder() LoopBuilder {
 	return LoopBuilder{[...]byte{
 		// INT3
 		0xcc,
-		//	MOV RAX, usleep
+		// MOV RAX, usleep
 		0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		// MOV RDI, 4000000 // 4 seconds chosen by fair dice roll
 		0x48, 0xc7, 0xc7, 0x00, 0x09, 0x3d, 0x00,
+		// CALL RAX
+		0xff, 0xd0,
+		// MOV RDI, pid
+		0x48, 0xc7, 0xc7, 0x00, 0x00, 0x00, 0x00,
+		// MOV ESI, SIGKILL
+		0xbe, 0x09, 0x00, 0x00, 0x00,
+		// MOV RAX, kill
+		0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		// CALL RAX
 		0xff, 0xd0,
 		// INT3
@@ -62,6 +72,16 @@ func NewLoopBuilder() LoopBuilder {
 
 func (loop *LoopBuilder) setUsleepAddress(addr uintptr) {
 	const LOOP_BUILDER_TARGET_OFFSET = 3
+	binary.LittleEndian.PutUint64(loop.data[LOOP_BUILDER_TARGET_OFFSET:], uint64(addr))
+}
+
+func (loop *LoopBuilder) setPid(pid int) {
+	const LOOP_BUILDER_TARGET_OFFSET = 24
+	binary.LittleEndian.PutUint32(loop.data[LOOP_BUILDER_TARGET_OFFSET:], uint32(pid))
+}
+
+func (loop *LoopBuilder) setKillAddress(addr uintptr) {
+	const LOOP_BUILDER_TARGET_OFFSET = 35
 	binary.LittleEndian.PutUint64(loop.data[LOOP_BUILDER_TARGET_OFFSET:], uint64(addr))
 }
 
@@ -268,6 +288,16 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 	}
 
 	loop.setUsleepAddress(usleep)
+	loop.setPid(tracer.pid)
+
+	kill := lib.GetAddress(KILL_NID)
+	if kill == 0 {
+		err = ErrNoKill
+		log.Println(err)
+		return
+	}
+
+	loop.setKillAddress(usleep)
 
 	eboot := proc.GetEboot()
 	if eboot == 0 {

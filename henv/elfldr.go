@@ -864,7 +864,9 @@ func (info *ElfLoadInfo) Close() (err error) {
 		info.reader = nil
 	}
 	if info.tracer != nil {
-		err = errors.Join(err, info.tracer.Detach())
+		// if tracer isn't nil then an error has occured
+		errors.Join(err, info.tracer.Kill(false))
+		errors.Join(err, info.tracer.Detach())
 		info.tracer = nil
 	}
 	return
@@ -985,6 +987,8 @@ func readElfData(r io.ReadCloser) (data []byte, err error) {
 		log.Println(err)
 		return
 	}
+
+	data = buf.Bytes()
 
 	return
 }

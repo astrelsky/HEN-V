@@ -397,7 +397,6 @@ func (hen *HenV) hasPrefixHandler(prefix string) bool {
 	hen.prefixHandlerMtx.RLock()
 	defer hen.prefixHandlerMtx.RUnlock()
 	_, ok := hen.prefixHandlers[prefix[:PREFIX_LENGTH]]
-	// FIXME: need to check if the handler is still alive
 	return ok
 }
 

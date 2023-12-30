@@ -12,6 +12,7 @@ const (
 	_PROC_SHARED_OBJECT_OFFSET = 0x3e8
 	_PROC_SELFINFO_NAME_OFFSET = 0x59C
 	_PROC_SELFINFO_NAME_SIZE   = 32
+	_PROC_PATH_OFFSET          = 0x3d8
 
 	_FD_RDIR_OFFSET = 0x10
 	_FD_JDIR_OFFSET = 0x18
@@ -143,4 +144,13 @@ func (proc KProc) SetName(name string) {
 	buf := [_PROC_SELFINFO_NAME_SIZE]byte{}
 	copy(buf[:], name)
 	KernelCopyin(uintptr(proc)+_PROC_SELFINFO_NAME_OFFSET, buf[:])
+}
+
+func (proc KProc) GetPath() string {
+	addr := kread64(uintptr(proc) + _PROC_PATH_OFFSET)
+	if addr == 0 {
+		return ""
+	}
+	res, _ := KernelCopyoutString(uintptr(addr))
+	return res
 }

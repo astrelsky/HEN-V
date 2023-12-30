@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -404,7 +405,9 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 
 	hen.launchChannel <- LaunchedAppInfo{pid: tracer.pid, titleid: titleid}
 
-	if hen.hasPrefixHandler(titleid) {
+	path := proc.GetPath()
+	if !strings.HasSuffix(path, "eboot.bin") && hen.hasPrefixHandler(titleid) {
+		// prefix handlers may not handle the eboot.bin
 		return
 	}
 

@@ -15,6 +15,8 @@ const (
 	_DBG_ARG_DEFAULT_TYPE uint32 = 1
 	_DBG_CMD_READ         uint64 = 0x12
 	_DBG_CMD_WRITE        uint64 = 0x13
+	_DBG_PROCESS_LIST_CMD uint64 = 0x14
+	_DBG_PROCESS_INFO_CMD uint64 = 0x18
 )
 
 type dbgArg1 struct {

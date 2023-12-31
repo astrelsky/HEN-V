@@ -12,7 +12,7 @@ Homebrew Apps
 * Homebrew apps will remain in the sandbox when run. This is make accessing
   resources such as system fonts easier.
 * To ensure the GPU can read/write data sections of an elf, all data sections are mapped with
-  the appropriate GPU_READ and GPU_WRITE mmap flags as necessary.
+  the appropriate `GPU_READ` and `GPU_WRITE` mmap flags as necessary.
 
 
 Payloads
@@ -41,7 +41,7 @@ Commands
 --------
 
 * Commands may be sent to HEN-V from a payload or application.
-* Full details and examples are shown in `commands.md`.
+* Full details and examples are shown in [commands.md](commands.md).
 
 
 KLOG and FTP
@@ -49,9 +49,11 @@ KLOG and FTP
 
 * To make life easier, a klog and ftp server have been put into their own application.
   This prevents them from consuming payload slots and keeps them running if HEN-V is killed.
+* The klog server listens on port `9081`.
+* The FTP server listens on port `1337`. 
 
 
 Credits
 -------
 
-* If you have a list, add it. Otherwise, you know who you are.
+* If you have a list of people who helped with everything to get this far, add it. Otherwise, you know who you are.

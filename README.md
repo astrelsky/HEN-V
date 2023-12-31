@@ -23,7 +23,6 @@ Payloads
 * Payloads are run as an app local process (subprocess) by HEN-V.
 * Up to 6 payloads may be running simultaneously.
   This may be extended to 15 in the future if editing the budget becomes possible.
-* Payloads may communicate with HEN-V using the socket fd 3.
 * All payloads have a default sighandler installed automatically for signals that will
   cause abnormal termination. If a payload crashes, even though they are separate
   processes, `SysCore` will terminate the entire application and all running local processes.

@@ -1,6 +1,9 @@
 HEN-V Commands
 ==============
 
+* Payloads send/receive commands by writing/reading to socket fd 3.
+* Applications send/receive commands by using `sceAppMessagingSendMsg`/`sceAppMessagingReceiveMsg`.
+
 
 Command Header
 --------------

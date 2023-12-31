@@ -30,8 +30,9 @@ func (b *MsgBuffer) PutUint64(v uint64) {
 }
 
 func (b *MsgBuffer) PutString(v string) {
-	b.PutUint32(uint32(len(v)))
+	b.PutUint32(uint32(len(v) + 1))
 	b.WriteString(v)
+	b.WriteByte(0)
 }
 
 func (hen *HenV) handleMsg(msg *AppMessage) (err error) {

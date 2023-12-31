@@ -46,7 +46,7 @@ struct CommandResponse {
 
 
 Registering a Prefix Handler
-============================
+----------------------------
 
 * There are times where someone may wish to take control of loading an elf for their own purposes.
   This may be achieved by registering a prefix handler with the prefix being the first 4 letters of
@@ -63,7 +63,7 @@ struct PrefixHandlerCommand {
 
 
 Unregistering a Prefix Handler
-==============================
+------------------------------
 
 * A registered prefix handler may only unregister itself.
 * It is the handlers responsibility to ensure it is unregistered.
@@ -77,7 +77,7 @@ struct UnregisterPrefixHandlerCommand {
 
 
 Registering a Launch Listener
-=============================
+-----------------------------
 
 * An application or payload may request to be notified every time a new process
   is created by `SysCore`.
@@ -85,7 +85,7 @@ Registering a Launch Listener
 
 
 Unregistering a Launch Listener
-==============================
+-------------------------------
 
 * It is the listeners responsibility to ensure it is unregistered.
   A *best effort* attempt will be made to remove listeners that have died.
@@ -93,7 +93,7 @@ Unregistering a Launch Listener
 
 
 Application/Process Launched Notification
-=========================================
+-----------------------------------------
 
 * The notification sent to a registered prefix handler when a process is created containing
   the prefix in the titleid, or a registered launch listener, is the single 32-bit pid
@@ -101,7 +101,7 @@ Application/Process Launched Notification
 
 
 Kill Command
-============
+------------
 
 * This command will cause HEN-V to panic and exit.
 * Doing this will cause all payloads to be terminated as well.
@@ -109,7 +109,7 @@ Kill Command
 
 
 Get Payload Number
-==================
+------------------
 
 * This command is for requesting the payload number of sender.
 * This command may only be sent by a payload. If sent by an application

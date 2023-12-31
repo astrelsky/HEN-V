@@ -92,21 +92,16 @@ static ALWAYS_INLINE void sigemptyset(sigset_t *restrict set) {
 }
 */
 
-// src, dst
-// rdi, rsi, rdx
-void __attribute__((naked)) sighandler_init(sigaction_t sigaction, void *entry, void *payload_args) {
+extern void sighandler(int);
+typedef void __attribute__((noreturn)) (*entry_t)(void *);
+
+void __attribute__((noreturn)) sighandler_init(sigaction_t sigaction, entry_t entry, void *payload_args) {
 	__asm__ volatile(
-		"movq		%rsi,	%r13\n"
-		"movq		%rdx,	%r15\n"
-		"call		getrip\n"
-	"getrip:\n"
-		"popq		%rsi\n"
-		"jmp		init\n"
-	"sighandler:\n"
-		"movq		$0,		%r12\n" // getpid
-		"nop\n"
-		"nop\n"
-		"nop\n"
+		"jmp do_init\n"
+		"sighandler:\n"
+		// movq $0, %r12
+		".word 0xBC49\n"
+		".zero 8\n"
 		"call		*%r12\n"
 		"movq		%rax,	%rdi\n"
 		"addq		$10,	%r12\n"
@@ -114,35 +109,16 @@ void __attribute__((naked)) sighandler_init(sigaction_t sigaction, void *entry, 
 		"movq		$37,	%rax\n"
 		"call		*%r12\n"
 		"int3\n"
-	"init:\n"
-		"addq		$6,		%rsi\n"
-		"mov		%rdi,	%r12\n"
-		"sub		$0x20,	%rsp\n"
-		"vpxor		%xmm0,	%xmm0, %xmm0\n"
-        "vmovdqu 	%xmm0,	12(%rsp)\n"
-		"movq		%rsi,	(%rsp)\n"
-		"movl		$0,		8(%rsp)\n"
-		"movl		$2,		%r14d\n"
-	"loop:\n"
-		"inc		%r14d\n"
-		"mov		%r14d,	%edi\n"
-		"mov		%rsp,	%rsi\n"
-		"xor		%rdx,	%rdx\n"
-		"call		*%r12\n"
-		"cmpl		$12,	%r14d\n"
-		"jnz		loop\n"
-		"movq		%r15,	%rdi\n" // payload_args
-		"jmp		*%r13\n" // entry
+		"do_init:\n"
 	);
+	struct sigaction action;
+	__builtin_memset(&action, 0, sizeof(action));
+	action.sa_handler = sighandler;
+	for (int i = 2; i <= 12; i++) {
+		sigaction(i, &action, NULL);
+	}
+	entry(payload_args);
 }
-
-
-void sighandler_init2(sigaction_t sigaction) {
-
-	(void)sigaction;
-}
-
-const char tmp[] = "payload15";
 
 //typedef int __attribute__((noreturn)) (*kill)(int pid, int sig);
 

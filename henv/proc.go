@@ -28,8 +28,6 @@ func (p KProc) GetParent() KProc {
 	return KProc(Kread64(uintptr(p) + 0xe0))
 }
 
-var _currentProc KProc
-
 func GetSyscoreProc() KProc {
 	return GetProc(syscall.Getppid())
 }

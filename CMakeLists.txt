@@ -11,7 +11,6 @@ include_directories	(SYSTEM "${PROJECT_ROOT}/include")
 include_directories(SYSTEM "${D_PS5SDK}")
 include_directories(SYSTEM "${D_PS5SDK}/include")
 
-add_subdirectory(chan)
 #add_subdirectory(spawner)
 
 # this was too complicated
@@ -24,7 +23,6 @@ add_subdirectory(chan)
 #FetchContent_MakeAvailable(NidResolver)
 
 add_subdirectory(libNidResolver)
-add_subdirectory(shared)
 add_subdirectory(util)
 #add_subdirectory(daemon)
 add_subdirectory(spawner)

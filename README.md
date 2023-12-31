@@ -31,8 +31,8 @@ Payloads
 
 ```c
 static void default_handler(int sig) {
-	(void) sig;
-	kill(getpid(), SIGKILL);
+    (void) sig;
+    kill(getpid(), SIGKILL);
 }
 ```
 
@@ -50,7 +50,7 @@ KLOG and FTP
 * To make life easier, a klog and ftp server have been put into their own application.
   This prevents them from consuming payload slots and keeps them running if HEN-V is killed.
 * The klog server listens on port `9081`.
-* The FTP server listens on port `1337`. 
+* The FTP server listens on port `1337`.
 
 
 Credits

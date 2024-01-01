@@ -16,4 +16,3 @@ ninja
 if ERRORLEVEL 1 (
 	EXIT /b 1
 )
-copy /Y ".\bin\spawner.elf" "C:\Users\astre\Documents\PS5\bdj-sdk\samples\hopsploit\src\main\resources\org\homebrew"

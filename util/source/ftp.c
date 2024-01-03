@@ -346,13 +346,9 @@ ftp_serve(uint16_t port) {
 
   while(atomic_load(&g_running)) {
     if((connfd=accept(g_srvfd, (struct sockaddr*)&client_addr, &addr_len)) < 0) {
-      if(errno == 0xa3) {
-		close(g_srvfd);
-        printf("Server closing due to system suspension\n");
-        return EXIT_SUCCESS;
-	  }
+	  close(g_srvfd);
       perror("accept");
-      continue;
+      return EXIT_SUCCESS;
     }
 
     pthread_create(&trd, NULL, ftp_thread, (void*)(long)connfd);

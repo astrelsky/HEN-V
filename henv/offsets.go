@@ -31,7 +31,7 @@ func GetSystemSoftwareVersion() uint32 {
 	if err != nil {
 		panic("failed to get kernel.sdk_version")
 	}
-	_version = version
+	_version = version & VERSION_MASK
 	return _version
 }
 
@@ -40,7 +40,7 @@ func GetAllprocOffset() uintptr {
 		return _allprocOffset
 	}
 
-	version := GetSystemSoftwareVersion() & VERSION_MASK
+	version := GetSystemSoftwareVersion()
 
 	switch version {
 	case V300:
@@ -69,7 +69,7 @@ func GetAllprocOffset() uintptr {
 }
 
 func GetSecurityFlagsOffset() uintptr {
-	version := GetSystemSoftwareVersion() & VERSION_MASK
+	version := GetSystemSoftwareVersion()
 	switch version {
 	case V300:
 		fallthrough
@@ -95,7 +95,7 @@ func GetSecurityFlagsOffset() uintptr {
 }
 
 func GetQaFlagsOffset() uintptr {
-	version := GetSystemSoftwareVersion() & VERSION_MASK
+	version := GetSystemSoftwareVersion()
 	switch version {
 	case V300:
 		fallthrough
@@ -121,7 +121,7 @@ func GetQaFlagsOffset() uintptr {
 }
 
 func GetUtokenFlagsOffset() uintptr {
-	version := GetSystemSoftwareVersion() & VERSION_MASK
+	version := GetSystemSoftwareVersion()
 	switch version {
 	case V300:
 		fallthrough
@@ -147,7 +147,7 @@ func GetUtokenFlagsOffset() uintptr {
 }
 
 func GetRootVnodeOffset() uintptr {
-	version := GetSystemSoftwareVersion() & VERSION_MASK
+	version := GetSystemSoftwareVersion()
 	switch version {
 	case V300:
 		fallthrough

@@ -270,12 +270,13 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 			conn, err := ln.Accept()
 			if err != nil {
 				err2 := errors.Unwrap(err)
-				if err2.Error() != "accept4: errno 163" {
-					// not entering rest mode
+				if err2.Error() == "accept4: errno 163" {
+					// entering rest mode
+					time.Sleep(time.Second)
+					reconnect()
+				} else {
 					log.Println(err)
 				}
-				reconnect()
-				time.Sleep(time.Second)
 				continue
 			}
 

@@ -18,7 +18,7 @@ Homebrew Apps
 Payloads
 --------
 
-* The payload server will listen on port **9022**. This is to prevent conflicts
+* The payload server will listen on port `9022`. This is to prevent conflicts
   with the elf loader used to start HEN-V.
 * Payloads are run as an app local process (subprocess) by HEN-V.
 * Up to 6 payloads may be running simultaneously.

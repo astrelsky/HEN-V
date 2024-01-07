@@ -112,7 +112,7 @@ void *__attribute__ ((naked)) realloc(void *ptr, size_t length) {
 }
 
 static __attribute__ ((used)) void *f_perror = nullptr;
-int __attribute__ ((naked))	perror(const char *msg) {
+void __attribute__ ((naked))	perror(const char *msg) {
 	__asm__ volatile("jmp *f_perror(%rip)");
 }
 

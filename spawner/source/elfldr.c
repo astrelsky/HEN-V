@@ -10,6 +10,7 @@
 
 #include <elf.h>
 #include <netinet/in.h>
+#include <ps5/dlsym.h>
 #include <ps5/payload_main.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -561,6 +562,10 @@ static bool create_read_write_sockets(uintptr_t proc, const int *sockets) {
 		return false;
 	}
 	sock = get_file_data(newtbl, sockets[1]);
+	if (sock == 0) {
+		puts("create_read_write_sockets sock == 0");
+		return false;
+	}
 	kwrite_uint32(sock, 0x100);
 	pcb = kread_uintptr(sock + 0x18);
 	if (pcb == 0) {
@@ -577,6 +582,12 @@ static bool create_read_write_sockets(uintptr_t proc, const int *sockets) {
 	return true;
 	// NOLINTEND(readability-magic-numbers)
 }
+
+typedef struct process_args {
+	struct payload_args args;
+	int fds[4];
+	int res;
+} process_args_t;
 
 static uintptr_t setup_kernel_rw(elf_loader_t *restrict self) {
 
@@ -621,30 +632,36 @@ static uintptr_t setup_kernel_rw(elf_loader_t *restrict self) {
 	uintptr_t newtbl = kread_uintptr(proc_get_fd(proc));
 	const uintptr_t pipeaddr = kread_uintptr(get_file(newtbl, files[2]));
 
-	reg_t regs;
-	tracer_get_registers(&self->tracer, &regs);
-	regs.r_rsp -= sizeof(files);
-	const uintptr_t newFiles = regs.r_rsp;
-	userland_copyin(self->pid, files, newFiles, sizeof(files));
-	regs.r_rsp -= (register_t) (sizeof(int) - sizeof(struct payload_args));
-	const uintptr_t rsp = regs.r_rsp;
-	tracer_set_registers(&self->tracer, &regs);
-
-	uintptr_t dlsym = LOOKUP_SYMBOL(&self->resolver, "sceKernelDlsym");
+	uintptr_t malloc = LOOKUP_SYMBOL(&self->resolver, "malloc");
+	if (malloc == 0) {
+		puts("failed to resolve malloc");
+		return 0;
+	}
 
 	// NOLINTBEGIN(performance-no-int-to-ptr)
-	struct payload_args result = {
-		.dlsym = (dlsym_t *)dlsym,
-		.rwpipe = (int *)(newFiles) + 2,
-		.rwpair = (int *)(newFiles),
-		.kpipe_addr = pipeaddr,
-		.kdata_base_addr = kernel_base,
-		.payloadout = (int *)(rsp + sizeof(struct payload_args))
-	};
-	// NOLINTEND(performance-no-int-to-ptr)
+	process_args_t *p_args = (process_args_t *)tracer_call(&self->tracer, malloc, sizeof(process_args_t), 0, 0, 0, 0, 0);
+	if (p_args == 0) {
+		puts("failed to allocate process args");
+		return 0;
+	}
 
-	userland_copyin(self->pid, &result, rsp, sizeof(result));
-	return rsp;
+	uintptr_t dlsym = LOOKUP_SYMBOL(&self->resolver, "sceKernelDlsym");
+	process_args_t args = {
+		.fds = {files[0], files[1], files[2], files[3]},
+		.res = 0,
+		.args = {
+			.dlsym = (dlsym_t *)dlsym,
+			.rwpipe = &p_args->fds[2],
+			.rwpair = &p_args->fds[0],
+			.kpipe_addr = pipeaddr,
+			.kdata_base_addr = kernel_base,
+			.payloadout = &p_args->res,
+		},
+	};
+
+	userland_copyin(self->pid, &args, (uintptr_t)p_args, sizeof(args));
+	return (uintptr_t)p_args;
+	// NOLINTEND(performance-no-int-to-ptr)
 }
 
 static void elf_load(elf_loader_t *restrict self) {
@@ -708,8 +725,6 @@ static bool load_lib_sysmodule(elf_loader_t *restrict self) {
 
 	uintptr_t meta = shared_lib_get_metadata(lib);
 	uintptr_t imagebase = shared_lib_get_imagebase(lib);
-	printf("meta 0x%08llx\n", meta);
-	printf("imagebase 0x%08llx\n", imagebase);
 	int res = resolver_add_library_metadata(&self->resolver, imagebase, meta);
 	if (res) {
 		printf("resolver_add_library_metadata(&self->resolver, imagebase, meta) -> %d\n", res);

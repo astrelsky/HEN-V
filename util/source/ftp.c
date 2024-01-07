@@ -37,6 +37,7 @@ void free(void*);
 #include <unistd.h>
 
 #include "cmd.h"
+#include "log.h"
 
 #define FTP_PORT 1337
 
@@ -131,7 +132,7 @@ ftp_readline(int fd) {
   char c;
 
   if(!buffer) {
-    perror("malloc");
+    LOG_PERROR("malloc");
     return NULL;
   }
 
@@ -163,7 +164,7 @@ ftp_readline(int fd) {
       buffer_backup = buffer;
       buffer = realloc(buffer, bufsize);
       if(!buffer) {
-	perror("realloc");
+	LOG_PERROR("realloc");
 	free(buffer_backup);
 	return NULL;
       }
@@ -285,7 +286,7 @@ ftp_serve(uint16_t port) {
   int connfd;
 
   if(getifaddrs(&ifaddr) == -1) {
-    perror("getifaddrs");
+    LOG_PERROR("getifaddrs");
     return EXIT_FAILURE;
   }
 
@@ -317,12 +318,12 @@ ftp_serve(uint16_t port) {
   freeifaddrs(ifaddr);
 
   if((g_srvfd=socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    perror("socket");
+    LOG_PERROR("socket");
     return EXIT_FAILURE;
   }
 
   if(setsockopt(g_srvfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int)) < 0) {
-    perror("setsockopt");
+    LOG_PERROR("setsockopt");
     return EXIT_FAILURE;
   }
 
@@ -332,12 +333,12 @@ ftp_serve(uint16_t port) {
   server_addr.sin_port = htons(port);
 
   if(bind(g_srvfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) != 0) {
-    perror("bind");
+    LOG_PERROR("bind");
     return EXIT_FAILURE;
   }
 
   if(listen(g_srvfd, 5) != 0) {
-    perror("listen");
+    LOG_PERROR("listen");
     return EXIT_FAILURE;
   }
 
@@ -347,7 +348,7 @@ ftp_serve(uint16_t port) {
   while(atomic_load(&g_running)) {
     if((connfd=accept(g_srvfd, (struct sockaddr*)&client_addr, &addr_len)) < 0) {
 	  close(g_srvfd);
-      perror("accept");
+      LOG_PERROR("accept");
       return EXIT_SUCCESS;
     }
 

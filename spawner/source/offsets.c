@@ -22,6 +22,7 @@ static uint32_t get_system_software_version(void) {
 	}
 	size_t size = 4;
 	sysctlbyname("kern.sdk_version", &version, &size, NULL, 0);
+	version &= VERSION_MASK;
 	return version;
 }
 
@@ -32,7 +33,7 @@ size_t get_allproc_offset(void) {
 	if (allprocOffset != 0) {
 		return allprocOffset;
 	}
-	switch(get_system_software_version() & VERSION_MASK) {
+	switch(get_system_software_version()) {
 		case V300:
 		case V310:
 		case V320:
@@ -54,7 +55,7 @@ size_t get_allproc_offset(void) {
 }
 
 size_t get_security_flags_offset(void) {
-	switch(get_system_software_version() & VERSION_MASK) {
+	switch(get_system_software_version()) {
 		case V300:
 		case V310:
 		case V320:
@@ -73,7 +74,7 @@ size_t get_security_flags_offset(void) {
 }
 
 size_t get_qa_flags_offset(void) {
-	switch(get_system_software_version() & VERSION_MASK) {
+	switch(get_system_software_version()) {
 		case V300:
 		case V310:
 		case V320:
@@ -93,7 +94,7 @@ size_t get_qa_flags_offset(void) {
 }
 
 size_t get_utoken_flags_offset(void) {
-	switch(get_system_software_version() & VERSION_MASK) {
+	switch(get_system_software_version()) {
 		case V300:
 		case V310:
 		case V320:
@@ -113,7 +114,7 @@ size_t get_utoken_flags_offset(void) {
 }
 
 size_t get_root_vnode_offset(void) {
-	switch(get_system_software_version() & VERSION_MASK) {
+	switch(get_system_software_version()) {
 		case V300:
 		case V310:
 		case V320:

@@ -52,6 +52,64 @@ KLOG and FTP
 * The FTP server listens on port `1337`.
 
 
+Kernel Read/Write Server
+------------------------
+
+* For processes which may need kernel r/w that were started from an alternate
+  userland entrypoing (bdj, webkit, masticore, etc) kernel r/w may be requested
+  by sending the following to port `1338`.
+```c
+typedef struct kernelrw_request {
+	int pid;
+	int master;
+	int victim;
+} kernelrw_request_t;
+```
+* The master and victim sockets **must** be configured properly prior to making the request.
+  An example of how to prepare the sockets is shown below.
+```c
+int configure_sockets(int *restrict master, int *restrict victim) {
+	const size_t IN6_PKTINFO_SIZE = 20;
+	*master = -1;
+	*victim = -1;
+	*master = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+	if (*master == -1) {
+		return -1;
+	}
+	*victim = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+	if (*victim == -1) {
+		close(*master);
+		*master = -1;
+		return -1;
+	}
+	uint32_t buf[] = {IN6_PKTINFO_SIZE, IPPROTO_IPV6, IPV6_TCLASS, 0, 0, 0};
+	if (setsockopt(*master, IPPROTO_IPV6, IPV6_2292PKTOPTIONS, buf, sizeof(buf))) {
+		close(*master);
+		close(*victim);
+		*master = -1;
+		*victim = -1;
+		return -1;
+	}
+	memset(buf, 0, sizeof(buf));
+	if (setsockopt(*victim, IPPROTO_IPV6, IPV6_PKTINFO, NativeMemory.addressOf(buf), IN6_PKTINFO_SIZE)) {
+		close(*master);
+		close(*victim);
+		*master = -1;
+		*victim = -1;
+		return -1;
+	}
+	return 0;
+}
+```
+* The response from the server will be as follows:
+```c
+typedef struct kernelrw_response {
+	uintptr_t kernel_base; // will be 0 if an error occured
+	uint32_t error_length; // includes the NULL terminator
+	char error[error_length];
+} kernelrw_response_t;
+```
+
 Credits
 -------
 

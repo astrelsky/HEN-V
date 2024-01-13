@@ -64,7 +64,7 @@ int send_klog(tcp_socket_t *restrict sock) {
 			return -1;
 		}
 		if (tcp_write(sock, klogbuf, nread)) {
-			LOG_INFO("tcp_write failed");
+			LOG_PRINTLN("tcp_write failed");
 			close(fd);
 			return 0;
 		}
@@ -75,7 +75,7 @@ void *klog(void *args) {
 	(void) args;
 	tcp_socket_t sock;
 	if (tcp_init(&sock, 1, KLOG_PORT)) {
-		LOG_INFO("tcp_init failed");
+		LOG_PRINTLN("tcp_init failed");
 		return NULL;
 	}
 
@@ -83,13 +83,13 @@ void *klog(void *args) {
 		const int err = tcp_accept(&sock);
 		if (err) {
 			if (err != REST_MODE_ERR) {
-				LOG_INFO("tcp_accept failed");
+				LOG_PRINTLN("tcp_accept failed");
 			}
 			return NULL;
 		}
 		done = send_klog(&sock);
 		if (tcp_close_connection(&sock)) {
-			LOG_INFO("tcp_close_connection failed");
+			LOG_PRINTLN("tcp_close_connection failed");
 		}
 	}
 	return NULL;

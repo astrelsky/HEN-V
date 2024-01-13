@@ -55,12 +55,12 @@ int tcp_init(tcp_socket_t *restrict self, int backlog, short port) {
 	}
 
 	if (tcp_bind(server, port)) {
-		LOG_INFO("tcp_bind failed");
+		LOG_PRINTLN("tcp_bind failed");
 		close(server);
 		return -1;
 	}
 	if (tcp_listen(server, backlog)) {
-		LOG_INFO("tcp_listen failed");
+		LOG_PRINTLN("tcp_listen failed");
 		close(server);
 		return -1;
 	}

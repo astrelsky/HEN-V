@@ -125,15 +125,15 @@ static const char *create_read_write_sockets(uintptr_t proc, int master, int vic
 static int send_error(const tcp_socket_t *restrict sock, const char *err, uint32_t length) {
 	const uint64_t base = 0;
 	if (tcp_write(sock, &base, sizeof(base))) {
-		LOG_INFO("tcp_write failed");
+		LOG_PRINTLN("tcp_write failed");
 		return -1;
 	}
 	if (tcp_write(sock, &length, sizeof(length))) {
-		LOG_INFO("tcp_write failed");
+		LOG_PRINTLN("tcp_write failed");
 		return -1;
 	}
 	if (tcp_write(sock, err, length)) {
-		LOG_INFO("tcp_write failed");
+		LOG_PRINTLN("tcp_write failed");
 		return -1;
 	}
 	return 0;
@@ -147,16 +147,16 @@ static int setup_client_kernelrw(const tcp_socket_t *restrict sock) {
 	};
 
 	if (tcp_read(sock, &req, sizeof(req))) {
-		LOG_INFO("tcp_read failed");
+		LOG_PRINTLN("tcp_read failed");
 		return -1;
 	}
-	LOG_INFOF("handling kernelrw request for pid %d, master: %d, victim: %d\n", req.pid, req.master, req.victim);
+	LOG_PRINTF("handling kernelrw request for pid %d, master: %d, victim: %d\n", req.pid, req.master, req.victim);
 	const uintptr_t proc = get_proc(req.pid);
 	if (proc == 0) {
 		const char *err = "failed to find proc for kernelrw request";
 		const uint32_t length = __builtin_strlen(err) + 1;
 		if (send_error(sock, err, length)) {
-			LOG_INFO("send_error failed");
+			LOG_PRINTLN("send_error failed");
 		}
 		return 0;
 	}
@@ -164,12 +164,12 @@ static int setup_client_kernelrw(const tcp_socket_t *restrict sock) {
 	if (err) {
 		const uint32_t length = __builtin_strlen(err) + 1;
 		if (send_error(sock, err, length)) {
-			LOG_INFO("send_error failed");
+			LOG_PRINTLN("send_error failed");
 		}
 		return 0;
 	}
 	if (tcp_write(sock, &kernel_base, sizeof(kernel_base))) {
-		LOG_INFO("tcp_write failed");
+		LOG_PRINTLN("tcp_write failed");
 	}
 	return 0;
 }
@@ -178,25 +178,25 @@ void *krw_server(void *args) {
 	(void) args;
 	// check first so if it's not supported this thread can just exit
 	if (allprocOffset == (size_t)-1) {
-		LOG_INFO("kernel version not supported; unknown allproc offset");
+		LOG_PRINTLN("kernel version not supported; unknown allproc offset");
 		return NULL;
 	}
 	tcp_socket_t sock;
 	if (tcp_init(&sock, 1, KRW_PORT)) {
-		LOG_INFO("tcp_init failed");
+		LOG_PRINTLN("tcp_init failed");
 		return NULL;
 	}
 	for (;;) {
 		const int err = tcp_accept(&sock);
 		if (err) {
 			if (err != REST_MODE_ERR) {
-				LOG_INFO("tcp_accept failed");
+				LOG_PRINTLN("tcp_accept failed");
 			}
 			return NULL;
 		}
 		setup_client_kernelrw(&sock);
 		if (tcp_close_connection(&sock)) {
-			LOG_INFO("tcp_close_connection failed");
+			LOG_PRINTLN("tcp_close_connection failed");
 		}
 	}
 	return NULL;

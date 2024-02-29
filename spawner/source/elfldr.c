@@ -93,7 +93,7 @@ static const Elf64_Phdr *get_text_header(elf_loader_t *self) {
 
 static void *to_file_offset(elf_loader_t *restrict self, uintptr_t addr) {
 	const Elf64_Phdr *restrict text = get_text_header(self);
-	if (addr >= text->p_vaddr)  {
+	if (text->p_vaddr != 0 && addr >= text->p_vaddr)  {
 		return (void *) (addr - text->p_vaddr + text->p_offset); // NOLINT(performance-no-int-to-ptr)
 	}
 	return (void *) addr; // NOLINT(performance-no-int-to-ptr)

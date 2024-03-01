@@ -108,7 +108,7 @@ func GetQaFlagsOffset() uintptr {
 	case V400:
 		return 0x6506498
 	case V402:
-		return 0x6505498
+		fallthrough
 	case V403:
 		fallthrough
 	case V450:
@@ -134,7 +134,7 @@ func GetUtokenFlagsOffset() uintptr {
 	case V400:
 		return 0x6506500
 	case V402:
-		return 0x6505500
+		fallthrough
 	case V403:
 		fallthrough
 	case V450:
@@ -160,7 +160,7 @@ func GetRootVnodeOffset() uintptr {
 	case V400:
 		return 0x66E74C0
 	case V402:
-		return 0x66E64C0
+		fallthrough
 	case V403:
 		fallthrough
 	case V450:

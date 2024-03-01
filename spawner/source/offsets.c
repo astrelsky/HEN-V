@@ -62,8 +62,8 @@ size_t get_security_flags_offset(void) {
 		case V321:
 			return 0x6466474;
 		case V400:
-			return 0x6506474;
 		case V402:
+			return 0x6506474;
 		case V403:
 		case V450:
 		case V451:
@@ -81,9 +81,7 @@ size_t get_qa_flags_offset(void) {
 		case V321:
 			return 0x6466498;
 		case V400:
-			return 0x6506498;
 		case V402:
-			return 0x6505498;
 		case V403:
 		case V450:
 		case V451:
@@ -101,9 +99,7 @@ size_t get_utoken_flags_offset(void) {
 		case V321:
 			return 0x6466500;
 		case V400:
-			return 0x6506500;
 		case V402:
-			return 0x6505500;
 		case V403:
 		case V450:
 		case V451:
@@ -121,9 +117,7 @@ size_t get_root_vnode_offset(void) {
 		case V321:
 			return 0x67AB4C0;
 		case V400:
-			return 0x66E74C0;
 		case V402:
-			return 0x66E64C0;
 		case V403:
 		case V450:
 		case V451:

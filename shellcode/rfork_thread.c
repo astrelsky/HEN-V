@@ -170,8 +170,9 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 				// if we failed here and it is homebrew we need to kill the pid
 				// if we don't then it'll be stuck in an infinite loop
 				stuff->kill(pid, SIGKILL);
+				return -1;
 			}
-			return -1;
+			return pid;
 		}
 		// try again after reconnecting
 		if (stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL) == -1) {
@@ -181,8 +182,9 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 				// if we failed here and it is homebrew we need to kill the pid
 				// if we don't then it'll be stuck in an infinite loop
 				stuff->kill(pid, SIGKILL);
+				return -1;
 			}
-			return -1;
+			return pid;
 		}
 	}
 

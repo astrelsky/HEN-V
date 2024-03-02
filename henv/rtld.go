@@ -38,17 +38,6 @@ type RtldPltHelper struct {
 	plttab_size uintptr
 }
 
-type RtldSectionIterator struct {
-	sections     uintptr
-	num_sections uint64
-}
-
-type RtldSection struct {
-	sectionType uintptr
-	start       uintptr
-	length      uint64
-}
-
 func (lib SharedLib) GetImageBase() uintptr {
 	return uintptr(Kread64(uintptr(lib) + _SHARED_LIB_IMAGEBASE_OFFSET))
 }

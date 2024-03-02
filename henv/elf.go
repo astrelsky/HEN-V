@@ -341,13 +341,13 @@ func checkElf(data []byte) error {
 	ehdr := (*Elf64_Ehdr)(unsafe.Pointer(&data[0]))
 	abi := ehdr.GetOsAbi()
 	if abi != elf.ELFOSABI_NONE && abi != elf.ELFOSABI_FREEBSD {
-		return fmt.Errorf("Unexpected ei_osabi %s", abi)
+		return fmt.Errorf("unexpected ei_osabi %s", abi)
 	}
 
 	machine := ehdr.GetMachine()
 
 	if machine != elf.EM_X86_64 {
-		return fmt.Errorf("Unexpected e_machine %s", machine)
+		return fmt.Errorf("unexpected e_machine %s", machine)
 	}
 
 	if ehdr.GetClass() != elf.ELFCLASS64 {
@@ -444,19 +444,22 @@ func findDynamicTable(ldr *Elf) (*Elf64_Dyn, error) {
 	return nil, ErrNoDynamicTable
 }
 
+func (ldr *Elf) getPhdrContaining(addr int) (*Elf64_Phdr, error) {
+	for i := range ldr.phdrs {
+		if Elf64_Addr(addr) >= ldr.phdrs[i].Paddr && Elf64_Addr(addr) < (ldr.phdrs[i].Paddr+Elf64_Addr(ldr.phdrs[i].Filesz)) {
+			return &ldr.phdrs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("phdr containing %#08x not found", addr)
+}
+
 func (ldr *Elf) toFileOffset(addr int) (int, error) {
-	text, err := ldr.getTextHeader()
+	phdr, err := ldr.getPhdrContaining(addr)
 	if err != nil {
 		log.Println(err)
 		return 0, err
 	}
-	if text.Vaddr == 0 {
-		return addr, nil
-	}
-	if Elf64_Addr(addr) >= text.Vaddr {
-		return int(Elf64_Addr(addr) - text.Vaddr + Elf64_Addr(text.Offset)), nil
-	}
-	return addr, nil
+	return int(Elf64_Addr(addr) - phdr.Vaddr + Elf64_Addr(phdr.Offset)), nil
 }
 
 func (ldr *Elf) faddr(addr int) (unsafe.Pointer, error) {

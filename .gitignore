@@ -23,3 +23,4 @@ stubber/out/
 assets/
 homebrew/
 go.sum
+vscode.bat

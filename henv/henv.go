@@ -70,7 +70,6 @@ type HenV struct {
 	wg               sync.WaitGroup
 	listenerMtx      sync.RWMutex
 	prefixHandlerMtx sync.RWMutex
-	pidMtx           sync.RWMutex
 	payloadMtx       sync.Mutex
 	prefixHandlers   map[string]AppLaunchPrefixHandler
 	launchListeners  []AppLaunchListener
@@ -143,17 +142,6 @@ func (hen *HenV) setPayloadProcess(num int, proc LocalProcess) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
 	hen.payloads[num].proc = proc
-}
-
-func (hen *HenV) checkPayloads() {
-	for i := range hen.payloads {
-		p := &hen.payloads[i]
-		if p.pid > 0 {
-			if !p.IsAlive() {
-				p.Close()
-			}
-		}
-	}
 }
 
 func (hen *HenV) NextPayload() (int, error) {
@@ -231,7 +219,7 @@ func (hen *HenV) addPrefixHandler(handler AppLaunchPrefixHandler) error {
 	defer hen.prefixHandlerMtx.Unlock()
 	currentHandler, ok := hen.prefixHandlers[handler.prefix]
 	if ok {
-		return fmt.Errorf("Prefix %s is already being handled by %#x", handler.prefix, currentHandler.id)
+		return fmt.Errorf("prefix %s is already being handled by %#x", handler.prefix, currentHandler.id)
 	}
 	log.Printf("adding prefix handler for prefix %s\n", handler.prefix)
 	hen.prefixHandlers[handler.prefix] = handler
@@ -298,9 +286,11 @@ func (hen *HenV) homebrewHandler(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	done := ctx.Done()
+
 	for {
 		select {
-		case _, _ = <-ctx.Done():
+		case <-done:
 			return
 		case info := <-hen.homebrewChannel:
 			log.Println("received homebrew info")
@@ -350,9 +340,11 @@ func (hen *HenV) launchListenerHandler(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer close(hen.listenerChannel)
+
+	done := ctx.Done()
 	for {
 		select {
-		case _, _ = <-ctx.Done():
+		case <-done:
 			return
 		case pid := <-hen.listenerChannel:
 			info, err := GetAppInfo(int(pid))
@@ -377,9 +369,11 @@ func (hen *HenV) launchHandler(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer close(hen.launchChannel)
+
+	done := ctx.Done()
 	for {
 		select {
-		case _, _ = <-ctx.Done():
+		case <-done:
 			return
 		case info := <-hen.launchChannel:
 			if hen.hasPrefixHandler(info.titleid) {
@@ -408,9 +402,10 @@ func (hen *HenV) elfLoadHandler(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer close(hen.elfChannel)
+	done := ctx.Done()
 	for {
 		select {
-		case _, _ = <-ctx.Done():
+		case <-done:
 			return
 		case info := <-hen.elfChannel:
 			func() {
@@ -431,10 +426,10 @@ func (hen *HenV) msgHandler(ctx context.Context) {
 	}()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	done := ctx.Done()
 	for {
 		select {
-		case _, _ = <-ctx.Done():
-
+		case <-done:
 			return
 		case msg := <-hen.msgChannel:
 			err := hen.handleMsg(msg)

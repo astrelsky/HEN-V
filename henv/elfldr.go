@@ -23,7 +23,7 @@ var (
 	ErrProcessNotReady            = errors.New("elf_start process is not ready (FS is 0)")
 	ErrNoSigaction                = errors.New("failed to resolve sigaction")
 	ErrNoGetpid                   = errors.New("failed to resolve getpid")
-	ErrNoElfData                  = errors.New("No elf data")
+	ErrNoElfData                  = errors.New("no elf data")
 	ErrTracerMmap                 = errors.New("load_libraries Tracer.Mmap")
 	ErrNullSock                   = errors.New("sock == 0")
 	ErrNullMasterPcb              = errors.New("master pcb == 0")
@@ -53,15 +53,14 @@ type ElfLoader struct {
 	payload   bool
 }
 
-type elfReadResult struct {
-	buf []byte
-	err error
-}
-
 func NewElfLoader(pid int, tracer *Tracer, data []byte, payload bool) (ElfLoader, error) {
 	var err error
 	if tracer == nil {
 		tracer, err = NewTracer(pid)
+		if err != nil {
+			log.Println(err)
+			return ElfLoader{}, err
+		}
 	}
 	elf, err := NewElf(data)
 	return ElfLoader{
@@ -71,10 +70,6 @@ func NewElfLoader(pid int, tracer *Tracer, data []byte, payload bool) (ElfLoader
 		pid:      pid,
 		payload:  payload,
 	}, err
-}
-
-func (ldr *ElfLoader) toFileOffset(addr int) (int, error) {
-	return ldr.elf.toFileOffset(addr)
 }
 
 func (ldr *ElfLoader) faddr(addr int) (unsafe.Pointer, error) {
@@ -87,10 +82,6 @@ func (ldr *ElfLoader) getProc() KProc {
 	}
 	ldr.proc = GetProc(ldr.pid)
 	return ldr.proc
-}
-
-func (ldr *ElfLoader) getDynamicTable() *Elf64_Dyn {
-	return ldr.elf.dyntab
 }
 
 func sizeAlign(size uint, alignment uint) uint {
@@ -434,7 +425,7 @@ func (ldr *ElfLoader) processPltRelocations() error {
 		if plt.Type() != elf.R_X86_64_JMP_SLOT {
 			sym := &ldr.elf.symtab[plt.Symbol()]
 			name := ldr.getString(int(sym.Name))
-			return fmt.Errorf("unexpected relocation type %s for symbol %s\n", plt.Type().String(), name)
+			return fmt.Errorf("unexpected relocation type %s for symbol %s", plt.Type().String(), name)
 		}
 
 		libsym, err := ldr.getSymbolAddress(plt)
@@ -517,7 +508,7 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 		default:
 			sym := &ldr.elf.symtab[rel.Symbol()]
 			name := ldr.getString(int(sym.Name))
-			return fmt.Errorf("unexpected relocation type %s for symbol %s\n", rel.Type().String(), name)
+			return fmt.Errorf("unexpected relocation type %s for symbol %s", rel.Type().String(), name)
 
 		}
 	}
@@ -665,6 +656,10 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 	const fileSize = int(unsafe.Sizeof(files))
 
 	ptr, err := ldr.tracer.Call(malloc, 68, 0, 0, 0, 0, 0)
+	if err != nil {
+		log.Println(err)
+		return
+	}
 	resPtr := int64(ptr)
 	ptr += 4
 	newFiles := int64(ptr)

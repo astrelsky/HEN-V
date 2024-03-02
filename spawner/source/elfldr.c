@@ -91,12 +91,24 @@ static const Elf64_Phdr *get_text_header(elf_loader_t *self) {
 	return NULL;
 }
 
-static void *to_file_offset(elf_loader_t *restrict self, uintptr_t addr) {
-	const Elf64_Phdr *restrict text = get_text_header(self);
-	if (text->p_vaddr != 0 && addr >= text->p_vaddr)  {
-		return (void *) (addr - text->p_vaddr + text->p_offset); // NOLINT(performance-no-int-to-ptr)
+static const Elf64_Phdr *get_phdr_containing(elf_loader_t *restrict self, uintptr_t addr) {
+	const Elf64_Phdr *const restrict phdrs = get_program_headers(self);
+	const Elf64_Ehdr *const restrict elf = get_elf_header(self);
+	for (ssize_t i = 0; i < elf->e_phnum; i++) {
+		if (addr >= phdrs[i].p_paddr && addr < (phdrs[i].p_paddr+phdrs[i].p_filesz)) {
+			return phdrs + i;
+		}
 	}
-	return (void *) addr; // NOLINT(performance-no-int-to-ptr)
+	return NULL;
+}
+
+static void *to_file_offset(elf_loader_t *restrict self, uintptr_t addr) {
+	const Elf64_Phdr *const restrict phdr = get_phdr_containing(self, addr);
+	if (phdr == NULL) {
+		printf("phdr containing 0x%08llx not found\n", addr);
+		return (void *) addr; // NOLINT(performance-no-int-to-ptr)
+	}
+	return (void *) (addr - phdr->p_paddr + phdr->p_offset);// NOLINT(performance-no-int-to-ptr)
 }
 
 static void *faddr(elf_loader_t *restrict self, uintptr_t addr) {

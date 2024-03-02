@@ -8,10 +8,6 @@ import (
 )
 
 const (
-	_DBG_ARG1_FULL_SIZE = 0x20
-	_DBG_ARG2_FULL_SIZE = 0x40
-	_DBG_ARG3_FULL_SIZE = 0x20
-
 	_DBG_ARG_DEFAULT_TYPE uint32 = 1
 	_DBG_CMD_READ         uint64 = 0x12
 	_DBG_CMD_WRITE        uint64 = 0x13

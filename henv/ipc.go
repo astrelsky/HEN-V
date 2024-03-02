@@ -90,10 +90,6 @@ func fileExists(path string) bool {
 	return syscall.Access(path, syscall.F_OK) == nil
 }
 
-func handleSyscoreIpc(hen *HenV, ctx context.Context, packets <-chan any) {
-	defer os.Remove(IPC_PATH)
-}
-
 func startSyscoreIpc(hen *HenV, ctx context.Context) {
 	defer func() {
 		hen.wg.Done()

@@ -107,8 +107,8 @@ type Reg struct {
 }
 
 var (
-	UnexpectedProcessStatusError = errors.New("Unexpected process status")
-	ErrProcessNotStopped         = errors.New("process not stopped")
+	ErrUnexpectedProcessStatus = errors.New("unexpected process status")
+	ErrProcessNotStopped       = errors.New("process not stopped")
 )
 
 func NewTracer(pid int) (*Tracer, error) {
@@ -125,8 +125,12 @@ func NewTracer(pid int) (*Tracer, error) {
 		return nil, err
 	}
 	status, err := tracer.Wait(0)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
 	if !status.Continued() { // doesn't make sense but whatever
-		return nil, UnexpectedProcessStatusError
+		return nil, ErrUnexpectedProcessStatus
 	}
 	return tracer, nil
 }
@@ -318,6 +322,10 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	}
 
 	state, err := tracer.Wait(0)
+	if err != nil {
+		log.Println(err)
+		return 0, err
+	}
 
 	if !state.Stopped() {
 		log.Println(ErrProcessNotStopped)
@@ -325,7 +333,7 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 	}
 
 	if state.StopSignal() != syscall.SIGTRAP {
-		err = fmt.Errorf("process received signal %s but SIGTRAP was expected\n", state.StopSignal().String())
+		err = fmt.Errorf("process received signal %s but SIGTRAP was expected", state.StopSignal().String())
 		log.Println(err)
 		return 0, err
 	}

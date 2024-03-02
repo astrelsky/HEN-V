@@ -38,7 +38,7 @@ func (p *LocalProcess) WriteMessage(msgType AppMessageType, msg []byte) (err err
 	const length = unsafe.Sizeof(emsg)
 	n, err := p.Write(unsafe.Slice((*byte)(unsafe.Pointer(&emsg)), length))
 	if n < int(length) {
-		err = fmt.Errorf("only wrote %v out of %v bytes\n", n, length)
+		err = fmt.Errorf("only wrote %v out of %v bytes", n, length)
 	}
 	if err != nil {
 		log.Println(err)
@@ -46,7 +46,7 @@ func (p *LocalProcess) WriteMessage(msgType AppMessageType, msg []byte) (err err
 	}
 	n, err = p.Write(msg)
 	if n < len(msg) {
-		err = fmt.Errorf("only wrote %v out of %v bytes\n", n, len(msg))
+		err = fmt.Errorf("only wrote %v out of %v bytes", n, len(msg))
 	}
 	if err != nil {
 		log.Println(err)
@@ -262,9 +262,11 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 		}
 	}
 
+	done := ctx.Done()
+
 	for {
 		select {
-		case _, _ = <-ctx.Done():
+		case <-done:
 			return
 		default:
 			conn, err := ln.Accept()

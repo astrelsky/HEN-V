@@ -211,6 +211,7 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 			err := info.LoadElf(hen)
 			if err != nil {
 				log.Println(err)
+				syscall.Kill(info.pid, syscall.SIGKILL)
 				return
 			}
 			hen.setPayloadPid(info.payload, info.pid)

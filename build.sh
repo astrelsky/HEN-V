@@ -1,5 +1,9 @@
 #!/bin/bash
+if [ ! -z "$PROSPEROGO" ]; then
+  export $PATH=$PROSPEROGO:$PATH
+fi
 export GOOS=prospero
+ninja clean > /dev/null 2>&1
 cd daemon
 go build -o daemon.elf
 if [ $? -eq 0 ]; then

@@ -1,6 +1,7 @@
 @echo off
-ninja clean
+if "%PROSPEROGO%" NEQ "" set PATH=%PROSPEROGO%;%PATH%
 set GOOS=prospero
+ninja clean > nul 2>&1
 cd daemon
 call go build -o daemon.elf
 if ERRORLEVEL 1 (

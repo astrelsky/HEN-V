@@ -296,7 +296,7 @@ func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib strin
 	if id != 0 {
 		res, err := ldr.tracer.Call(id_loader, id, 0, 0, 0, 0, 0)
 		if err != nil || res == -1 {
-			err = fmt.Errorf("failed to load lib %s", lib)
+			err = fmt.Errorf("failed to load lib %s id %#x", lib, id)
 			log.Println(err)
 			return 0, err
 		}

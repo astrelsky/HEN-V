@@ -371,11 +371,7 @@ func (ldr *ElfLoader) loadLibraries() error {
 		} else if strings.HasPrefix(lib, "libc.") || strings.HasPrefix(lib, "libSceLibcInternal") {
 			handle = LIBC_HANDLE
 		} else {
-			ext := strings.LastIndexByte(lib, '.')
-			if ext != -1 {
-				lib = lib[:ext]
-			}
-
+			lib, _ = strings.CutSuffix(lib, ".so")
 			handle, err = ldr.loadLibrary(idLoader, nameLoader, uintptr(mem), lib)
 			if err != nil {
 				log.Println(err)

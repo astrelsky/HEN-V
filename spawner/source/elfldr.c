@@ -196,7 +196,6 @@ static int64_t load_library(elf_loader_t *restrict self, uintptr_t id_loader, ui
 		}
 	} else {
 		userland_copyin(self->pid, lib, mem, length);
-		userland_copyin(self->pid, ".sprx", mem + length, sizeof(".sprx"));
 		if ((int64_t)tracer_call(&self->tracer, name_loader, mem, 0, 0, 0, 0, 0) == -1) {
 			printf("failed to load lib %s\n", lib);
 			//return -1;

@@ -23,6 +23,7 @@ type InternalAppMessage struct {
 	timestamp   uint64
 }
 
+//go:generate stringer -type=AppMessageType
 type AppMessageType uint32
 
 const (
@@ -209,10 +210,11 @@ func (hen *HenV) processPayloadMessages(p *Payload, ctx context.Context) {
 				log.Println(err)
 				return
 			}
-			log.Printf("received msg type %d from payload\n", emsg.msgType)
+			mtype := AppMessageType(emsg.msgType)
+			log.Printf("received msg type %s from payload\n", mtype)
 			msg := &AppMessage{
 				sender:    emsg.sender,
-				msgType:   AppMessageType(emsg.msgType),
+				msgType:   mtype,
 				payload:   make([]byte, emsg.payloadSize),
 				timestamp: time.Now(),
 				rw:        p,

@@ -361,6 +361,12 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 
 			num := hen.getNextPayloadNum()
 
+			if num == -1 {
+				log.Println("No more payloads available, wait for another to finish")
+				conn.Close()
+				continue
+			}
+
 			p, err := hen.SpawnPayload(num, ctx)
 			if err != nil {
 				log.Println(err)

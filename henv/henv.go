@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/bits"
 	"net"
 	"os"
 	"os/signal"
@@ -85,7 +86,7 @@ type HenV struct {
 	cancelChannel    chan os.Signal
 	currentAuthIdMtx *sync.Mutex
 	kmemMtx          *sync.Mutex
-	nextPayload      int
+	payloadCount     uint64
 }
 
 type AppLaunchListener struct {
@@ -133,14 +134,18 @@ func (hen *HenV) ClosePayload(num int) (err error) {
 	} else if p.pid == 0 {
 		p.pid = -1
 	}
+	hen.payloadCount |= ^(1 << num)
 	return
 }
 
 func (hen *HenV) getNextPayloadNum() int {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
-	num := hen.nextPayload
-	hen.nextPayload++
+	num := bits.TrailingZeros64(hen.payloadCount)
+	if num == 64 {
+		return -1
+	}
+	hen.payloadCount ^= (1 << num)
 	return num
 }
 
@@ -168,6 +173,7 @@ func NewHenV() (HenV, context.Context) {
 		cancelChannel:    c,
 		currentAuthIdMtx: &currentAuthIdMtx,
 		kmemMtx:          &kmemMtx,
+		payloadCount:     0xffffffffffffffff,
 	}, ctx
 }
 

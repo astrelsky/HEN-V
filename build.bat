@@ -1,6 +1,7 @@
 @echo off
 if "%PROSPEROGO%" NEQ "" set PATH=%PROSPEROGO%;%PATH%
 set GOOS=prospero
+set GOAMD64=v3
 ninja clean > nul 2>&1
 cd daemon
 call go build -o daemon.elf

@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
@@ -1002,8 +1001,6 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 		return ErrNoElfData
 	}
 
-	start := time.Now()
-
 	proc := GetProc(info.pid)
 	if proc == 0 {
 		return ErrProcNotFound
@@ -1022,7 +1019,5 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 
 	defer ldr.Close()
 
-	err = ldr.Run()
-	fmt.Printf("elf loaded in %s\n", time.Since(start))
-	return err
+	return ldr.Run()
 }

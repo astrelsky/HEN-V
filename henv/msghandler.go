@@ -98,9 +98,11 @@ func replyPayloadNumberRequest(rw AppMessageReadWriter) {
 		msg := MsgBuffer{}
 		msg.PutUint16(0xffff)
 		msg.PutString(ErrNonPayloadNumRequester.Error())
-		rw.WriteMessage(HENV_MSG_TYPE_GET_PAYLOAD_NUMBER, msg.Bytes())
+		p.Write(msg.Bytes())
 		return
 	}
-	msg := unsafe.Slice((*byte)(unsafe.Pointer(&p.num)), 2)
-	rw.WriteMessage(HENV_MSG_TYPE_GET_PAYLOAD_NUMBER, msg)
+	msg := make([]byte, 2)
+	binary.LittleEndian.PutUint16(msg, uint16(p.num))
+	log.Printf("sending payload number: %v\n", p.num)
+	p.Write(msg)
 }

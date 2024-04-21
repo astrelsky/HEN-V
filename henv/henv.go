@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -54,16 +55,16 @@ type LaunchedAppInfo struct {
 }
 
 type ElfLoadInfo struct {
-	reader     io.ReadCloser
-	pidChannel chan int
-	pid        int
-	tracer     *Tracer
-	payload    int
+	reader  io.ReadCloser
+	pid     int
+	tracer  *Tracer
+	payload int
 }
 
 type Payload struct {
-	proc LocalProcess
-	pid  int
+	net.Conn
+	num int
+	pid int
 }
 
 type HenV struct {
@@ -73,18 +74,18 @@ type HenV struct {
 	payloadMtx       sync.Mutex
 	prefixHandlers   map[string]AppLaunchPrefixHandler
 	launchListeners  []AppLaunchListener
-	payloadChannel   chan int
 	listenerChannel  chan int32
 	launchChannel    chan LaunchedAppInfo
 	homebrewChannel  chan HomebrewLaunchInfo
 	elfChannel       chan ElfLoadInfo
 	msgChannel       chan *AppMessage
 	sendMsgChannel   chan *OutgoingAppMessage
-	payloads         [15]Payload
+	payloads         map[int]*Payload
 	cancel           context.CancelFunc
 	cancelChannel    chan os.Signal
 	currentAuthIdMtx *sync.Mutex
 	kmemMtx          *sync.Mutex
+	nextPayload      int
 }
 
 type AppLaunchListener struct {
@@ -99,8 +100,11 @@ type AppLaunchPrefixHandler struct {
 }
 
 func (p *Payload) Close() error {
+	if p.IsAlive() {
+		p.Kill()
+	}
 	p.pid = -1
-	return p.proc.Close()
+	return p.Conn.Close()
 }
 
 func (p *Payload) IsAlive() bool {
@@ -120,7 +124,7 @@ func (p *Payload) Kill() error {
 func (hen *HenV) ClosePayload(num int) (err error) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
-	p := &hen.payloads[num]
+	p := hen.payloads[num]
 	if p.pid > 0 {
 		if p.IsAlive() {
 			p.Kill()
@@ -132,29 +136,18 @@ func (hen *HenV) ClosePayload(num int) (err error) {
 	return
 }
 
-func (hen *HenV) setPayloadPid(num, pid int) {
+func (hen *HenV) getNextPayloadNum() int {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
-	hen.payloads[num].pid = pid
+	num := hen.nextPayload
+	hen.nextPayload++
+	return num
 }
 
-func (hen *HenV) setPayloadProcess(num int, proc LocalProcess) {
+func (hen *HenV) addPayload(num int, p *Payload) {
 	hen.payloadMtx.Lock()
 	defer hen.payloadMtx.Unlock()
-	hen.payloads[num].proc = proc
-}
-
-func (hen *HenV) NextPayload() (int, error) {
-	hen.payloadMtx.Lock()
-	defer hen.payloadMtx.Unlock()
-	//hen.checkPayloads()
-	for i := range hen.payloads {
-		if hen.payloads[i].pid < 0 {
-			hen.payloads[i].pid = 0
-			return i, nil
-		}
-	}
-	return -1, ErrTooManyPayloads
+	hen.payloads[num] = p
 }
 
 func NewHenV() (HenV, context.Context) {
@@ -164,13 +157,13 @@ func NewHenV() (HenV, context.Context) {
 	return HenV{
 		prefixHandlers:   map[string]AppLaunchPrefixHandler{},
 		launchListeners:  []AppLaunchListener{},
-		payloadChannel:   make(chan int), // unbuffered
 		listenerChannel:  make(chan int32, CHANNEL_BUFFER_SIZE),
 		launchChannel:    make(chan LaunchedAppInfo, CHANNEL_BUFFER_SIZE),
 		homebrewChannel:  make(chan HomebrewLaunchInfo), // unbuffered
 		elfChannel:       make(chan ElfLoadInfo),        // unbuffered
 		msgChannel:       make(chan *AppMessage, CHANNEL_BUFFER_SIZE),
 		sendMsgChannel:   make(chan *OutgoingAppMessage, CHANNEL_BUFFER_SIZE),
+		payloads:         map[int]*Payload{},
 		cancel:           cancel,
 		cancelChannel:    c,
 		currentAuthIdMtx: &currentAuthIdMtx,
@@ -186,7 +179,6 @@ func (hen *HenV) Close() error {
 	log.Println("NO MORE HOMEBREW FOR YOU!")
 	hen.cancel()
 	close(hen.cancelChannel)
-	close(hen.payloadChannel)
 	close(hen.listenerChannel)
 	close(hen.launchChannel)
 	close(hen.homebrewChannel)

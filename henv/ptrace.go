@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -109,6 +110,9 @@ type Reg struct {
 var (
 	ErrUnexpectedProcessStatus = errors.New("unexpected process status")
 	ErrProcessNotStopped       = errors.New("process not stopped")
+	ErrNilProcParam            = errors.New("proc param is NULL")
+	ErrNilLibcParam            = errors.New("libc param is NULL")
+	ptraceMtx                  = sync.Mutex{}
 )
 
 func NewTracer(pid int) (*Tracer, error) {
@@ -119,18 +123,19 @@ func NewTracer(pid int) (*Tracer, error) {
 		pid:           pid,
 	}
 
+	ptraceMtx.Lock()
+
 	err := tracer.ptrace(PT_ATTACH, 0, 0)
 	if err != nil {
+		ptraceMtx.Unlock()
 		log.Println(err)
 		return nil, err
 	}
-	status, err := tracer.Wait(0)
+	_, err = tracer.Wait(0)
 	if err != nil {
+		ptraceMtx.Unlock()
 		log.Println(err)
 		return nil, err
-	}
-	if !status.Continued() { // doesn't make sense but whatever
-		return nil, ErrUnexpectedProcessStatus
 	}
 	return tracer, nil
 }
@@ -141,6 +146,7 @@ func (tracer *Tracer) Detach() error {
 		err = tracer.ptrace(PT_DETACH, 0, 0)
 		tracer.pid = 0
 	}
+	ptraceMtx.Unlock()
 	return err
 }
 
@@ -291,7 +297,10 @@ func (tracer *Tracer) startCall(backup *Reg, jmp *Reg) (int, error) {
 		}
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			return 0, errors.New("failed to get libkernel for traced proc")
+			lib = proc.GetLib(1)
+			if lib == 0 {
+				return 0, errors.New("failed to get libkernel for traced proc")
+			}
 		}
 		tracer.libkernelBase = lib.GetImageBase()
 		if tracer.libkernelBase == 0 {
@@ -371,7 +380,10 @@ func (tracer *Tracer) startSyscall(backup *Reg, jmp *Reg) (int, error) {
 		}
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			return 0, ErrNoLibKernel
+			lib = proc.GetLib(1)
+			if lib == 0 {
+				return 0, ErrNoLibKernel
+			}
 		}
 		addr := lib.GetAddress(_GET_AUTHINFO_NID)
 		if addr == 0 {
@@ -451,8 +463,11 @@ func (tracer *Tracer) Errno() error {
 		}
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			log.Println(ErrNoLibKernel)
-			return ErrNoLibKernel
+			lib = proc.GetLib(1)
+			if lib == 0 {
+				log.Println(ErrNoLibKernel)
+				return ErrNoLibKernel
+			}
 		}
 		addr := lib.GetAddress(_ERRNO_NID)
 		if addr == 0 {
@@ -551,4 +566,82 @@ func (tracer *Tracer) Close(fd int) (int, error) {
 
 func (tracer *Tracer) Socket(domain int, socktype int, protocol int) (int, error) {
 	return tracer.Syscall(syscall.SYS_SOCKET, uintptr(domain), uintptr(socktype), uintptr(protocol), 0, 0, 0)
+}
+
+func (tracer *Tracer) GetProcParam() (res RemoteProcParam, err error) {
+	var regs Reg
+	err = tracer.GetRegisters(&regs)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	copy := regs
+	regs.Rsp -= 0x18
+	err = tracer.SetRegisters(&regs)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	_, err = tracer.Syscall(syscall.SYS_DYNLIB_GET_PROC_PARAM, uintptr(regs.Rsp+8), uintptr(regs.Rsp)+16, 0, 0, 0, 0)
+	if err != nil {
+		log.Println(err)
+		return RemoteProcParam{}, err
+	}
+	addr, err := UserlandRead64(tracer.pid, uintptr(regs.Rsp+8))
+	log.Printf("addr %#08x\n", addr)
+	if err != nil {
+		log.Println(err)
+		return RemoteProcParam{}, err
+	}
+	if addr == 0 {
+		err = ErrNilProcParam
+		log.Println(err)
+		return RemoteProcParam{}, err
+	}
+	tracer.SetRegisters(&copy)
+	return RemoteProcParam{
+		pid:  tracer.pid,
+		addr: uintptr(addr),
+	}, nil
+}
+
+type RemoteProcParam struct {
+	pid  int
+	addr uintptr
+}
+type RemoteLibcParam struct {
+	pid  int
+	addr uintptr
+}
+
+func (p RemoteProcParam) GetLibcParam() (RemoteLibcParam, error) {
+	addr, _ := UserlandRead64(p.pid, p.addr+0x38)
+	if addr == 0 {
+		err := ErrNilLibcParam
+		log.Println(err)
+		return RemoteLibcParam{}, err
+	}
+	return RemoteLibcParam{
+		pid:  p.pid,
+		addr: uintptr(addr),
+	}, nil
+}
+
+func (p RemoteLibcParam) SetHeapSize(size int) {
+	addr, _ := UserlandRead64(p.pid, p.addr+0x10)
+	if addr == 0 {
+		log.Println("libparam heap size pointer was NULL")
+		return
+	}
+	UserlandWrite64(p.pid, uintptr(addr), uint64(size))
+}
+
+func (p RemoteLibcParam) EnableExtendedAlloc() {
+	// copy the Need_sceLibc pointer to sceLibcHeapExtendedAlloc since it's already 1
+	ptr, _ := UserlandRead64(p.pid, p.addr+0x48)
+	if ptr == 0 {
+		log.Println("libparam need libc pointer was NULL")
+		return
+	}
+	UserlandWrite64(p.pid, p.addr+0x20, ptr)
 }

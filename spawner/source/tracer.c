@@ -1,5 +1,6 @@
 #include "auth.h"
 #include "libs.h"
+#include "memory.h"
 #include "proc.h"
 #include "tracer.h"
 
@@ -26,6 +27,8 @@
 #define PIPE 42
 #define PIPE2 687
 #define SETSOCKOPT 105
+#define DYNLIB_GET_PROC_PARAM 598
+#define DYNLIB_DO_COPY_RELOCATIONS 599
 
 static uintptr_t tracer_start_call(tracer_t *restrict self, const reg_t *restrict backup, reg_t *restrict jmp);
 static uintptr_t tracer_start_syscall(tracer_t *restrict self, const reg_t *restrict backup, reg_t *restrict jmp);
@@ -334,4 +337,24 @@ void tracer_dump_registers(const reg_t *restrict regs) {
 	printf("rbp: 0x%08llx\n", regs->r_rbp);
 	printf("rsp: 0x%08llx\n", regs->r_rsp);
 	printf("rip: 0x%08llx\n", regs->r_rip);
+}
+
+int tracer_dynlib_process_needed_and_relocate(tracer_t *restrict self) {
+	return (int) tracer_syscall(self, DYNLIB_DO_COPY_RELOCATIONS, 0, 0, 0, 0, 0, 0);
+}
+
+uintptr_t tracer_get_proc_param(tracer_t *restrict self) {
+	reg_t regs;
+	tracer_get_registers(self, &regs);
+	const reg_t backup = regs;
+	regs.r_rsp -= sizeof(uintptr_t[3]);
+	tracer_set_registers(self, &regs);
+	const uintptr_t p_proc_param = regs.r_rsp+sizeof(uintptr_t);
+	const uintptr_t p_proc_param_length = regs.r_rsp+sizeof(uintptr_t[2]);
+	if (tracer_syscall(self, DYNLIB_GET_PROC_PARAM, p_proc_param, p_proc_param_length, 0, 0, 0, 0)) {
+		tracer_perror(self, "DYNLIB_GET_PROC_PARAM failed");
+		return 0;
+	}
+	tracer_set_registers(self, &backup);
+	return userland_read64(self->pid, p_proc_param);
 }

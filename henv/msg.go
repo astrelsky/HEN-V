@@ -175,7 +175,7 @@ func (hen *HenV) runMessageSender(ctx context.Context) {
 	}
 }
 
-func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
+func (hen *HenV) processPayloadMessages(p *Payload, ctx context.Context) {
 	defer func() {
 		hen.wg.Done()
 		log.Println("Done")
@@ -209,12 +209,13 @@ func (hen *HenV) processPayloadMessages(p LocalProcess, ctx context.Context) {
 				log.Println(err)
 				return
 			}
+			log.Printf("received msg type %d from payload\n", emsg.msgType)
 			msg := &AppMessage{
 				sender:    emsg.sender,
 				msgType:   AppMessageType(emsg.msgType),
 				payload:   make([]byte, emsg.payloadSize),
 				timestamp: time.Now(),
-				rw:        &p,
+				rw:        p,
 			}
 			n, err = p.Read(msg.payload)
 			if n < int(emsg.payloadSize) {

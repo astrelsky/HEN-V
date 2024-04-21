@@ -8,11 +8,10 @@ const (
 )
 
 var (
-	libSceSystemService             = &syscall.LazyPrx{Name: "libSceSystemService.sprx"}
-	sceSystemServiceGetAppStatus    = libSceSystemService.NewProc("sceSystemServiceGetAppStatus")
-	sceSystemServiceAddLocalProcess = libSceSystemService.NewProc("sceSystemServiceAddLocalProcess")
-	sceAppMessagingSendMsgFun       = libSceSystemService.NewProc("sceAppMessagingSendMsg")
-	sceAppMessagingReceiveMsgFun    = libSceSystemService.NewProc("sceAppMessagingReceiveMsg")
+	libSceSystemService          = &syscall.LazyPrx{Name: "libSceSystemService.sprx"}
+	sceSystemServiceGetAppStatus = libSceSystemService.NewProc("sceSystemServiceGetAppStatus")
+	sceAppMessagingSendMsgFun    = libSceSystemService.NewProc("sceAppMessagingSendMsg")
+	sceAppMessagingReceiveMsgFun = libSceSystemService.NewProc("sceAppMessagingReceiveMsg")
 )
 
 func init() {

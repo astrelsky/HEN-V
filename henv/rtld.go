@@ -20,6 +20,7 @@ const (
 	_ALLOCATION_ALIGNMENT        = 0x10
 	_ALLOCATION_ALIGNMENT_MASK   = 0xf
 	_LIB_HANDLE_OFFSET           = 0x28
+	_LIB_ENTRY_POINT_OFFSET      = 0x68
 	_LIB_PATH_OFFSET             = 0x8
 	_METADATA_PLT_HELPER_OFFSET  = 0x28
 	_NID_LENGTH                  = 11
@@ -48,6 +49,10 @@ func (lib SharedLib) next() SharedLib {
 
 func (lib SharedLib) Handle() int {
 	return int(Kread32(uintptr(lib) + _LIB_HANDLE_OFFSET))
+}
+
+func (lib SharedLib) GetEntryPoint() uintptr {
+	return uintptr(Kread64(uintptr(lib) + _LIB_ENTRY_POINT_OFFSET))
 }
 
 func (lib SharedLib) GetMetaData() SharedLibMetaData {
@@ -118,4 +123,23 @@ func (obj SharedObject) GetLib(handle int) SharedLib {
 		}
 	}
 	return 0
+}
+
+func (lib SharedLib) GetPath() string {
+	addr := Kread64(uintptr(lib) + _LIB_PATH_OFFSET)
+	if addr == 0 {
+		return ""
+	}
+	s, err := KernelCopyoutString(uintptr(addr))
+	if err != nil {
+		log.Println(err)
+		return ""
+	}
+	return s
+}
+
+func (obj SharedObject) DumpLibs() {
+	for lib := SharedLib(Kread64(uintptr(obj))); lib != 0; lib = lib.next() {
+		log.Printf("lib %s: %v\n", lib.GetPath(), lib.Handle())
+	}
 }

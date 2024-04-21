@@ -15,21 +15,15 @@ import (
 
 const PAYLOAD_ADDRESS = ":9022"
 
-type LocalProcessArgs struct {
-	_                 int32
-	fd                int32
-	enableCrashReport int32
-	userId            int32
-	_                 uint64
-	preloadPrxFlags   uint64
-}
-
-type LocalProcess struct {
+type ProcessSocket struct {
+	mtx sync.Mutex
 	net.Conn
-	num int
+	fp      *os.File
+	fd      int
+	childFd int
 }
 
-func (p *LocalProcess) WriteMessage(msgType AppMessageType, msg []byte) (err error) {
+func (p *Payload) WriteMessage(msgType AppMessageType, msg []byte) (err error) {
 	emsg := ExternalAppMessage{
 		sender:      uint32(getpid()),
 		msgType:     uint32(msgType),
@@ -53,14 +47,6 @@ func (p *LocalProcess) WriteMessage(msgType AppMessageType, msg []byte) (err err
 		return
 	}
 	return nil
-}
-
-type ProcessSocket struct {
-	mtx sync.Mutex
-	net.Conn
-	fp      *os.File
-	fd      int
-	childFd int
 }
 
 func NewProcessSocket(name string) (s *ProcessSocket, fd int, err error) {
@@ -114,90 +100,181 @@ func (s *ProcessSocket) Close() (err error) {
 	return
 }
 
-func newLocalProcess(num int) (LocalProcess, int, error) {
+func (hen *HenV) SpawnPayload(num int, ctx context.Context) (p *Payload, err error) {
 	s, fd, err := NewProcessSocket(fmt.Sprintf("payload%d-socket", num))
 	if err != nil {
 		log.Println(err)
-		return LocalProcess{}, -1, err
+		return
 	}
-	return LocalProcess{Conn: s, num: num}, fd, nil
-}
-
-func SystemServiceAddLocalProcess(num int, hen *HenV, ctx context.Context) (err error) {
+	pid, err := spawn(true, PAYLOAD_EBOOT_PATH, "", []string{"payload0.bin"})
+	if err != nil {
+		log.Println(err)
+		return
+	}
 	defer func() {
-		if err == nil {
-			return
+		if err != nil {
+			syscall.Kill(pid, syscall.SIGKILL)
 		}
-		hen.ClosePayload(num)
 	}()
 
-	status, err := SystemServiceGetAppStatus()
+	tracer, err := NewTracer(pid)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	hen.wg.Add(1)
-	go func() {
-		defer hen.wg.Done()
+	defer tracer.Detach()
 
-		p, fd, err := newLocalProcess(num)
-
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		hen.setPayloadProcess(num, p)
-
-		param := &LocalProcessArgs{
-			fd:                int32(fd),
-			enableCrashReport: 0,
-			userId:            -1,
-		}
-
-		argv := []uintptr{0}
-		path := []byte(fmt.Sprintf("/app0/payload%d.bin\x00", num))
-		res, _, _ := sceSystemServiceAddLocalProcess.Call(
-			uintptr(status.id),
-			uintptr(unsafe.Pointer(&path[0])),
-			uintptr(unsafe.Pointer(&argv[0])),
-			uintptr(unsafe.Pointer(param)),
-		)
-
-		if uint32(res) == uint32(0x80AA0008) {
-			// we need to push an invalid value so that the elf loader will stop blocking
-			hen.payloadChannel <- -1
-			err = ErrTooManyPayloads
-			log.Println(err)
-			return
-		}
-
-		if int32(res) < 0 {
-			err = fmt.Errorf("sceSystemServiceAddLocalProcess failed: %#x", int32(res))
-			// we need to push an invalid value so that the elf loader will stop blocking
-			hen.payloadChannel <- -1
-			log.Println(err)
-			return
-		}
-
-		hen.wg.Add(1)
-		p.Conn.(*ProcessSocket).closeUnneeded()
-		go hen.processPayloadMessages(p, ctx)
-	}()
-
-	return
-}
-
-func (hen *HenV) handlePayload(num int, ctx context.Context) error {
-
-	err := SystemServiceAddLocalProcess(num, hen, ctx)
+	var regs Reg
+	tracer.GetRegisters(&regs)
 	if err != nil {
 		log.Println(err)
-		return err
+		return
 	}
 
-	return nil
+	tracer.ptrace(PT_CONTINUE, uintptr(regs.Rip), int(syscall.SIGCONT))
+
+	proc := GetProc(pid)
+	eboot := proc.GetEboot()
+	base := eboot.GetImageBase()
+
+	if base == 0 {
+		err = ErrBadImageBase
+		log.Println(err)
+		return
+	}
+
+	log.Println("correcting payload heap")
+
+	_, err = tracer.Syscall(syscall.SYS_DYNLIB_PROCESS_NEEDED_AND_RELOCATE, 0, 0, 0, 0, 0, 0)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	// patch heap now
+	param, err := tracer.GetProcParam()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	libcparam, err := param.GetLibcParam()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	libcparam.SetHeapSize(-1)
+	libcparam.EnableExtendedAlloc()
+
+	log.Printf("eboot base: %#08x\n", base)
+
+	loop := NewLoopBuilder()
+
+	lib := proc.GetLib(1)
+	if lib == 0 {
+		lib = proc.GetLib(LIBKERNEL_HANDLE)
+		if lib == 0 {
+			err = ErrNoLibKernel
+			log.Println(err)
+			return
+		}
+		log.Println("normal libkernel handle worked")
+	}
+
+	log.Printf("libkernel base: %#08x\n", lib.GetImageBase())
+
+	usleep := lib.GetAddress(USLEEP_NID)
+	if usleep == 0 {
+		err = ErrNoUsleep
+		log.Println(err)
+		return
+	}
+
+	loop.setUsleepAddress(usleep)
+	loop.setPid(tracer.pid)
+
+	_, err = UserlandCopyin(tracer.pid, eboot.GetEntryPoint(), loop.data[:])
+	if err != nil {
+		err = errors.Join(ErrCopyLoop, err)
+		log.Println(err)
+		return
+	}
+
+	// patch __DT_INIT to a single RET to prevent it from loading libraries, starting threads, etc.
+	ret := []byte{0xc3}
+	_, err = UserlandCopyin(tracer.pid, base+0x10, ret)
+	if err != nil {
+		err = errors.Join(ErrCopyLoop, err)
+		log.Println(err)
+		return
+	}
+
+	err = tracer.Continue()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	status, err := tracer.Wait(0)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	if !status.Stopped() {
+		var regs Reg
+		tracer.GetRegisters(&regs)
+		regs.Dump(log.Writer())
+		log.Printf("state: %#08x\n", status)
+		log.Println(status.Signal())
+		err = ErrProcessNotStopped
+		log.Println(err)
+		return
+	}
+
+	if status.StopSignal() != syscall.SIGTRAP {
+		err = getUnexpectedSignalError(status.StopSignal())
+		log.Println(err)
+		return
+	}
+
+	err = tracer.GetRegisters(&regs)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	if regs.Rip != int64(eboot.GetEntryPoint())+1 {
+		err = ErrUnexpectedRip
+		log.Println(err)
+		return
+	}
+
+	proc.EscalatePrivileges()
+
+	newfd, err := tracer.Syscall(syscall.SYS_RDUP, uintptr(getpid()), uintptr(fd), 0, 0, 0, 0)
+	if err != nil {
+		syscall.Kill(pid, syscall.SIGKILL)
+		log.Println(err)
+		return
+	}
+	if newfd != 3 {
+		err = fmt.Errorf("expected child's parent socket to be 3 but was %d", newfd)
+		syscall.Kill(pid, syscall.SIGKILL)
+		log.Println(err)
+	}
+	s.closeUnneeded()
+	p = &Payload{
+		Conn: s,
+		num:  num,
+		pid:  pid,
+	}
+	hen.addPayload(num, p)
+	hen.wg.Add(1)
+	go hen.processPayloadMessages(p, ctx)
+	return
 }
 
 func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
@@ -214,7 +291,6 @@ func (hen *HenV) payloadHandler(payloads chan ElfLoadInfo) {
 				syscall.Kill(info.pid, syscall.SIGKILL)
 				return
 			}
-			hen.setPayloadPid(info.payload, info.pid)
 			proc := GetProc(info.pid)
 			if proc == 0 {
 				log.Printf("Failed to get kernel proc for pid %v\n", info.pid)
@@ -283,23 +359,19 @@ func (hen *HenV) runPayloadServer(ctx context.Context) {
 				continue
 			}
 
-			num, err := hen.NextPayload()
+			num := hen.getNextPayloadNum()
+
+			p, err := hen.SpawnPayload(num, ctx)
 			if err != nil {
 				log.Println(err)
+				conn.Close()
 				continue
 			}
 
 			ldr <- ElfLoadInfo{
-				pidChannel: hen.payloadChannel,
-				pid:        -1,
-				reader:     conn,
-				payload:    num,
-			}
-
-			err = hen.handlePayload(num, ctx)
-			if err != nil {
-				log.Println(err)
-				conn.Close()
+				pid:     p.pid,
+				reader:  conn,
+				payload: num,
 			}
 		}
 	}

@@ -2,6 +2,9 @@ package henv
 
 import (
 	"io"
+	"log"
+	"sync/atomic"
+	"time"
 )
 
 type ByteBuilder struct {
@@ -20,10 +23,21 @@ func (b *ByteBuilder) Grow(n int) {
 	}
 }
 
-func (b *ByteBuilder) ReadFrom(r io.Reader) (n int64, err error) {
+func (b *ByteBuilder) ReadFrom(r io.ReadCloser) (n int64, err error) {
+	// overkill timeout but it'll ensure we never get stuck
+	// unless the runtime itself is stuck because that happened :(
+	done := atomic.Bool{}
+	go func() {
+		time.Sleep(time.Second * 4)
+		if !done.Load() {
+			log.Println("read timeout reached, assuming read finished")
+			r.Close()
+		}
+	}()
 	off := b.off
 	b.off = len(b.buf)
 	m, err := io.ReadFull(r, b.buf[off:])
+	done.Store(true)
 	n = int64(m)
 	return
 }

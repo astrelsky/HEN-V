@@ -3,6 +3,7 @@
 #include "faulthandler.h"
 #include "jailbreak.h"
 #include "libs.h"
+#include "memory.h"
 #include "nid_resolver/resolver.h"
 #include "module.h"
 #include "offsets.h"
@@ -32,6 +33,10 @@
 #define LNC_UTIL_ERROR_ALREADY_RUNNING 0x8094000c
 #define LNC_ERROR_APP_NOT_FOUND 0x80940031
 #define ENTRYPOINT_OFFSET 0x70
+#define LIBC_PARAM_OFFSET 0x38
+#define HEAP_SIZE_OFFSET 0x10
+#define NEED_LIB_C_OFFSET 0x48
+#define LIBC_HEAP_EXTENDED_ALLOC_OFFSET 0x20
 
 #define PROCESS_LAUNCHED 1
 
@@ -453,6 +458,58 @@ typedef struct {
 	uintptr_t func;
 } ipc_result_t;
 
+static int fix_process_heap(tracer_t *restrict tracer) {
+	puts("fixing process heap");
+
+	if (tracer_dynlib_process_needed_and_relocate(tracer)) {
+		tracer_perror(tracer, "tracer_dynlib_process_needed_and_relocate failed");
+		return 1;
+	}
+
+	const uintptr_t proc_param = tracer_get_proc_param(tracer);
+	if (proc_param == 0) {
+		puts("failed to get proc param");
+		return 1;
+	}
+
+	const uintptr_t libc_param = userland_read64(tracer->pid, proc_param+LIBC_PARAM_OFFSET);
+	if (libc_param == 0) {
+		puts("failed to get libc param");
+		return 1;
+	}
+
+	const uintptr_t p_heap_size = userland_read64(tracer->pid, libc_param+HEAP_SIZE_OFFSET);
+	if (p_heap_size == 0) {
+		puts("failed to get libc heap size pointer");
+		return 1;
+	}
+
+	userland_write64(tracer->pid, p_heap_size, (uintptr_t)-1);
+
+	// copy the need libc pointer, which points to 1, to the externed alloc pointer
+	const uintptr_t p_need_libc = userland_read64(tracer->pid, libc_param+NEED_LIB_C_OFFSET);
+	if (p_need_libc == 0) {
+		puts("failed to get need libc pointer");
+		return 1;
+	}
+
+	userland_write64(tracer->pid, libc_param+LIBC_HEAP_EXTENDED_ALLOC_OFFSET, p_need_libc);
+
+	puts("heap fixed successfully");
+	return 0;
+}
+
+static uintptr_t get_spawned(const int pid) {
+	uintptr_t spawned = 0;
+	while (spawned == 0) {
+		spawned = get_proc(pid);
+		if (spawned == 0 && !is_process_alive(pid)) {
+			return 0;
+		}
+	}
+	return spawned;
+}
+
 static void *hook_thread(void *args) {
 	uintptr_t *restrict spawned = (uintptr_t *)args;
 	printf("hook thread started\n");
@@ -547,16 +604,12 @@ static void *hook_thread(void *args) {
 	//printf("tracer_continue after execve returned state 0x%x\n", state);
 	//dump_state(state);
 
-	do { // NOLINT
-		*spawned = get_proc(pid);
-		if (*spawned == 0) {
-			if (!is_process_alive(pid)) {
-				puts("process died");
-				tracer_finalize(&tracer);
-				return NULL;
-			}
-		}
-	} while (*spawned == 0);
+	*spawned = get_spawned(pid);
+	if (*spawned == 0) {
+		puts("process died");
+		tracer_finalize(&tracer);
+		return NULL;
+	}
 
 	uintptr_t libkernel = proc_get_lib(*spawned, LIBKERNEL_HANDLE);
 	uintptr_t libc = proc_get_lib(*spawned, LIBC_HANDLE);
@@ -568,7 +621,11 @@ static void *hook_thread(void *args) {
 
 	puts("spawned process obtained");
 
-	puts("success");
+	if (fix_process_heap(&tracer)) {
+		puts("failed to fix process heap");
+		tracer_finalize(&tracer);
+		return NULL;
+	}
 
 	// FIXME why did getting the nanosleep offset from *spawned crash
 	const uintptr_t usleep_address = get_usleep_address(*spawned);

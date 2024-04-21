@@ -20,20 +20,8 @@ Payloads
 
 * The payload server will listen on port `9022`. This is to prevent conflicts
   with the elf loader used to start HEN-V.
-* Payloads are run as an app local process (subprocess) by HEN-V.
-* Up to 6 payloads may be running simultaneously.
-  This may be extended to 15 in the future if editing the budget becomes possible.
-* All payloads have a default sighandler installed automatically for signals that will
-  cause abnormal termination. If a payload crashes, even though they are separate
-  processes, `SysCore` will terminate the entire application and all running local processes.
-  The default sighandler is as follows; if you don't like it, install your own.
-
-```c
-static void default_handler(int sig) {
-    (void) sig;
-    kill(getpid(), SIGKILL);
-}
-```
+* Payloads are run in their own process using `sceKernelSpawn`.
+* All payloads will automaticlly have a unix socket in fd 3 to communicate with HEN-V.
 
 
 Commands

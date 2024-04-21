@@ -2,7 +2,6 @@ package henv
 
 import (
 	"debug/elf"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -34,13 +34,14 @@ var (
 )
 
 const (
-	_STACK_ALIGN           = 0x10
-	_PAGE_LENGTH           = 0x4000
-	_MMAP_TEXT_FLAGS       = syscall.MAP_FIXED | syscall.MAP_SHARED
-	_MMAP_DATA_FLAGS       = syscall.MAP_FIXED | syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE
-	_PAYLOAD_ARGS_SIZE     = int(0x30)
-	DLSYM_NID          Nid = "LwG8g3niqwA"
-	MALLOC_NID         Nid = "gQX+4GDQjpM"
+	_STACK_ALIGN               = 0x10
+	_PAGE_LENGTH               = 0x4000
+	_MMAP_TEXT_FLAGS           = syscall.MAP_FIXED | syscall.MAP_SHARED
+	_MMAP_DATA_FLAGS           = syscall.MAP_FIXED | syscall.MAP_ANONYMOUS | syscall.MAP_PRIVATE
+	_PAYLOAD_ARGS_SIZE         = int(0x30)
+	DLSYM_NID              Nid = "LwG8g3niqwA"
+	MALLOC_NID             Nid = "gQX+4GDQjpM"
+	_ELFLDR_MAX_GOROUTINES     = 6
 )
 
 type ElfLoader struct {
@@ -385,6 +386,10 @@ func (ldr *ElfLoader) loadLibraries() error {
 
 		err = ldr.addLibrary(handle)
 
+		if err != nil && handle == LIBKERNEL_HANDLE {
+			err = ldr.addLibrary(1)
+		}
+
 		if err != nil {
 			log.Println(err)
 			return err
@@ -394,7 +399,7 @@ func (ldr *ElfLoader) loadLibraries() error {
 	return nil
 }
 
-func (ldr *ElfLoader) getSymbolAddress(rel *Elf64_Rela) (uintptr, error) {
+func (ldr *ElfLoader) getSymbolAddress(rel Elf64_Rela) (uintptr, error) {
 	name := ldr.getString(int(ldr.elf.symtab[rel.Symbol()].Name))
 	libsym := ldr.resolver.LookupSymbol(name)
 	if libsym == 0 {
@@ -403,32 +408,103 @@ func (ldr *ElfLoader) getSymbolAddress(rel *Elf64_Rela) (uintptr, error) {
 	return libsym, nil
 }
 
+func (ldr *ElfLoader) processPltRelocation(plt Elf64_Rela) error {
+	libsym, err := ldr.getSymbolAddress(plt)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	symaddr, err := ldr.faddr(int(plt.r_offset))
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	*(*uintptr)(symaddr) = libsym
+	return nil
+}
+
 func (ldr *ElfLoader) processPltRelocations() error {
 	if ldr.elf.plttab == nil {
 		return nil
 	}
 
 	for i := range ldr.elf.plttab {
-		plt := &ldr.elf.plttab[i]
+		plt := ldr.elf.plttab[i]
 		if plt.Type() != elf.R_X86_64_JMP_SLOT {
 			sym := &ldr.elf.symtab[plt.Symbol()]
 			name := ldr.getString(int(sym.Name))
 			return fmt.Errorf("unexpected relocation type %s for symbol %s", plt.Type().String(), name)
 		}
-
-		libsym, err := ldr.getSymbolAddress(plt)
+		err := ldr.processPltRelocation(plt)
 		if err != nil {
 			log.Println(err)
 			return err
 		}
-		symaddr, err := ldr.faddr(int(plt.r_offset))
+	}
+
+	return nil
+}
+
+func (ldr *ElfLoader) processRelaRelocation(rel Elf64_Rela) error {
+	switch rel.Type() {
+	case elf.R_X86_64_64:
+		// symbol + addend
+		libsym, err := ldr.getSymbolAddress(rel)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		symaddr, err := ldr.faddr(int(rel.r_offset))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		*(*uintptr)(symaddr) = libsym + uintptr(rel.r_addend)
+
+	case elf.R_X86_64_GLOB_DAT:
+		// symbol
+		libsym, err := ldr.getSymbolAddress(rel)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		symaddr, err := ldr.faddr(int(rel.r_offset))
 		if err != nil {
 			log.Println(err)
 			return err
 		}
 		*(*uintptr)(symaddr) = libsym
+	case elf.R_X86_64_RELATIVE:
+		// imagebase + addend
+		symaddr, err := ldr.faddr(int(rel.r_offset))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		vaddr, err := ldr.toVirtualAddress(uintptr(rel.r_addend))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		*(*uintptr)(symaddr) = vaddr
+	case elf.R_X86_64_JMP_SLOT:
+		// edge case where the dynamic relocation sections are merged
+		libsym, err := ldr.getSymbolAddress(rel)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		symaddr, err := ldr.faddr(int(rel.r_offset))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		*(*uintptr)(symaddr) = libsym
+	default:
+		sym := &ldr.elf.symtab[rel.Symbol()]
+		name := ldr.getString(int(sym.Name))
+		return fmt.Errorf("unexpected relocation type %s for symbol %s", rel.Type().String(), name)
 	}
-
 	return nil
 }
 
@@ -438,66 +514,10 @@ func (ldr *ElfLoader) processRelaRelocations() error {
 	}
 
 	for i := range ldr.elf.reltab {
-		rel := &ldr.elf.reltab[i]
-		switch rel.Type() {
-		case elf.R_X86_64_64:
-			// symbol + addend
-			libsym, err := ldr.getSymbolAddress(rel)
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			symaddr, err := ldr.faddr(int(rel.r_offset))
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			*(*uintptr)(symaddr) = libsym + uintptr(rel.r_addend)
-
-		case elf.R_X86_64_GLOB_DAT:
-			// symbol
-			libsym, err := ldr.getSymbolAddress(rel)
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			symaddr, err := ldr.faddr(int(rel.r_offset))
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			*(*uintptr)(symaddr) = libsym
-		case elf.R_X86_64_RELATIVE:
-			// imagebase + addend
-			symaddr, err := ldr.faddr(int(rel.r_offset))
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			vaddr, err := ldr.toVirtualAddress(uintptr(rel.r_addend))
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			*(*uintptr)(symaddr) = vaddr
-		case elf.R_X86_64_JMP_SLOT:
-			// edge case where the dynamic relocation sections are merged
-			libsym, err := ldr.getSymbolAddress(rel)
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			symaddr, err := ldr.faddr(int(rel.r_offset))
-			if err != nil {
-				log.Println(err)
-				return err
-			}
-			*(*uintptr)(symaddr) = libsym
-		default:
-			sym := &ldr.elf.symtab[rel.Symbol()]
-			name := ldr.getString(int(sym.Name))
-			return fmt.Errorf("unexpected relocation type %s for symbol %s", rel.Type().String(), name)
-
+		err := ldr.processRelaRelocation(ldr.elf.reltab[i])
+		if err != nil {
+			log.Println(err)
+			return err
 		}
 	}
 	return nil
@@ -671,6 +691,9 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 		// edge case where the elf doesn't use libkernel
 		proc := ldr.getProc()
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
+		if lib == 0 {
+			proc.GetLib(1)
+		}
 		dlsym = lib.GetAddress(DLSYM_NID)
 		if dlsym == 0 {
 			err = ErrNoDlSym
@@ -723,51 +746,6 @@ func correctRsp(regs *Reg) {
 	regs.Rsp = ((regs.Rsp & int64(mask)) - 8)
 }
 
-func (ldr *ElfLoader) prepSighandler(regs *Reg) error {
-	lib := ldr.proc.GetLib(LIBKERNEL_HANDLE)
-	if lib == 0 {
-		log.Println(ErrNoLibKernel)
-		return ErrNoLibKernel
-	}
-	sigaction := lib.GetAddress("KiJEPEWRyUY")
-	if sigaction == 0 {
-		log.Println(ErrNoSigaction)
-		return ErrNoSigaction
-	}
-
-	getpid := lib.GetAddress("HoLVWNanBBc")
-	if getpid == 0 {
-		log.Println(ErrNoGetpid)
-		return ErrNoGetpid
-	}
-
-	eboot := ldr.proc.GetEboot()
-	if eboot == 0 {
-		log.Println(ErrNoEboot)
-		return ErrNoEboot
-	}
-
-	shellcode := make([]byte, len(sighandlerInit))
-	copy(shellcode, sighandlerInit[:])
-
-	binary.LittleEndian.PutUint64(shellcode[0x2f:], uint64(getpid))
-
-	// skip a bit to ensure the instructions we're writing to aren't cached
-	target := eboot.GetImageBase() + 0x1000
-	_, err := UserlandCopyin(ldr.pid, target, shellcode)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	regs.Rdx = regs.Rdi // payload_args
-	regs.Rdi = int64(sigaction)
-	regs.Rsi = regs.Rip // the real entry point
-	regs.Rip = int64(target)
-
-	return nil
-}
-
 func (ldr *ElfLoader) start(args uintptr) error {
 	log.Printf("imagebase: %#08x\n", ldr.imagebase)
 	var regs Reg
@@ -790,14 +768,6 @@ func (ldr *ElfLoader) start(args uintptr) error {
 	}
 
 	regs.Rip = int64(rip)
-
-	if ldr.payload {
-		err = ldr.prepSighandler(&regs)
-		if err != nil {
-			log.Println(err)
-			return err
-		}
-	}
 
 	err = ldr.tracer.SetRegisters(&regs)
 	if err != nil {
@@ -949,7 +919,9 @@ func readElfData(r io.ReadCloser) (data []byte, err error) {
 			if off > 0 {
 				m += off
 			}
+			log.Printf("growing %#x bytes\n", m)
 			buf.Grow(int(m))
+			log.Printf("read %#x bytes, reading %#x bytes\n", len(buf.Bytes()), m)
 			n, err = buf.ReadFrom(r)
 			if n != int64(m) {
 				if err == nil {
@@ -967,6 +939,9 @@ func readElfData(r io.ReadCloser) (data []byte, err error) {
 		shdrs := unsafe.Slice((*elf.Section64)(unsafe.Pointer(&(buf.Bytes()[ehdr.Shoff]))), ehdr.Shnum)
 		for i := range shdrs {
 			shdr := &shdrs[i]
+			if elf.SectionType(shdr.Type) == elf.SHT_NOBITS {
+				continue
+			}
 			shdrEnd := uint(shdr.Off) + uint(shdr.Size)
 			if shdrEnd > end {
 				end = shdrEnd
@@ -1003,13 +978,6 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 	defer info.Close()
 
 	if info.tracer == nil {
-		if info.pidChannel != nil {
-			info.pid = <-info.pidChannel
-			if info.pid == -1 {
-				// sceSystemServiceAddLocalProcess failed
-				return nil
-			}
-		}
 		tracer, err := NewTracer(info.pid)
 		if err != nil {
 			log.Println(err)
@@ -1034,6 +1002,8 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 		return ErrNoElfData
 	}
 
+	start := time.Now()
+
 	proc := GetProc(info.pid)
 	if proc == 0 {
 		return ErrProcNotFound
@@ -1052,27 +1022,7 @@ func (info *ElfLoadInfo) LoadElf(hen *HenV) error {
 
 	defer ldr.Close()
 
-	return ldr.Run()
-}
-
-// typedef int (*sigaction_t)(int sig, const struct sigaction *act, struct sigaction *oact);
-// typdef void (*payload_entry_t)(struct payload_args *args);
-// sighandler_init(sigaction_t sigaction, payload_entry_t entry, struct payload_args *args)
-var sighandlerInit = [...]byte{
-	0x41, 0x57, 0x41, 0x56, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x28, 0x48, 0x8d, 0x05, 0x1b, 0x00,
-	0x00, 0x00, 0x4c, 0x8d, 0x64, 0x24, 0x08, 0x49, 0x89, 0xd6, 0x48, 0x89, 0xf3, 0x49, 0x89, 0xff,
-	0xc5, 0xf8, 0x57, 0xc0, 0xbf, 0x02, 0x00, 0x00, 0x00, 0x31, 0xd2, 0xeb, 0x24, 0x49, 0xbc, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x41, 0xff, 0xd4, 0x48, 0x89, 0xc7, 0x49, 0x83, 0xc4,
-	0x0a, 0xbe, 0x09, 0x00, 0x00, 0x00, 0x48, 0xc7, 0xc0, 0x25, 0x00, 0x00, 0x00, 0x41, 0xff, 0xd4,
-	0xcc, 0x48, 0xc7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0xc5, 0xf8, 0x11,
-	0x44, 0x24, 0x10, 0x48, 0x89, 0x44, 0x24, 0x08, 0x41, 0xff, 0xd7, 0xbf, 0x03, 0x00, 0x00, 0x00,
-	0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7, 0xbf, 0x04, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6,
-	0x31, 0xd2, 0x41, 0xff, 0xd7, 0xbf, 0x05, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41,
-	0xff, 0xd7, 0xbf, 0x06, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7, 0xbf,
-	0x07, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7, 0xbf, 0x08, 0x00, 0x00,
-	0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7, 0xbf, 0x09, 0x00, 0x00, 0x00, 0x4c, 0x89,
-	0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7, 0xbf, 0x0a, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2,
-	0x41, 0xff, 0xd7, 0xbf, 0x0b, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7,
-	0xbf, 0x0c, 0x00, 0x00, 0x00, 0x4c, 0x89, 0xe6, 0x31, 0xd2, 0x41, 0xff, 0xd7, 0x4c, 0x89, 0xf7,
-	0xff, 0xd3,
+	err = ldr.Run()
+	fmt.Printf("elf loaded in %s\n", time.Since(start))
+	return err
 }

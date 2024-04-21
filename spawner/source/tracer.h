@@ -64,3 +64,5 @@ int tracer_socket(tracer_t *restrict self, int domain, int type, int protocol);
 int tracer_pipe(tracer_t *restrict self, int *fildes);
 int tracer_setsockopt(tracer_t *restrict self, int s, int level, int optname, const void *optval, unsigned int optlen);
 void tracer_perror(tracer_t *restrict self, const char *msg);
+int tracer_dynlib_process_needed_and_relocate(tracer_t *restrict self);
+uintptr_t tracer_get_proc_param(tracer_t *restrict self);

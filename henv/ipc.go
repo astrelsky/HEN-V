@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -98,12 +99,17 @@ func startSyscoreIpc(hen *HenV, ctx context.Context) {
 
 	log.Println("syscore ipc started")
 
-	if fileExists(IPC_PATH) {
-		panic(fmt.Errorf("homebrew ipc unix socket %s already exists", IPC_PATH))
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	for fileExists(IPC_PATH) {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			time.Sleep(time.Millisecond * 10)
+		}
+	}
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "unix", IPC_PATH)
@@ -389,15 +395,6 @@ func handleHomebrewLaunch(hen *HenV, tracer *Tracer, fun, args uintptr) (err err
 	}
 
 	titleid := info.TitleId()
-	if titleid == HenVTitleId {
-		// payload
-		pid := tracer.pid
-		// we need to detatch before attempting to send it over the channel
-		tracer.Detach()
-		tracer = nil
-		hen.payloadChannel <- pid
-		return
-	}
 
 	hen.launchChannel <- LaunchedAppInfo{pid: tracer.pid, titleid: titleid}
 

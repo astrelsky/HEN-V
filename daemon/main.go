@@ -118,6 +118,7 @@ func shutup() {
 
 func main() {
 	shutup()
+	log.Println("hi")
 	//log.Printf("runtime.NumCPU: %v\n", runtime.NumCPU())
 	//go canceller()
 	hen, ctx := henv.NewHenV()

@@ -20,3 +20,13 @@ static inline uintptr_t proc_get_ucred(uintptr_t proc) {
 void userland_copyin(int pid, const void *src, uintptr_t dst, size_t length);
 
 void userland_copyout(int pid, uintptr_t src, void *dst, size_t length);
+
+static inline uintptr_t userland_read64(int pid, uintptr_t src) {
+	uintptr_t res;
+	userland_copyout(pid, src, &res, sizeof(res));
+	return res;
+}
+
+static inline void userland_write64(int pid, uintptr_t dst, uintptr_t value) {
+	userland_copyin(pid, &value, dst, sizeof(value));
+}

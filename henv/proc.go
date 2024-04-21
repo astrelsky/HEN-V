@@ -1,6 +1,7 @@
 package henv
 
 import (
+	"log"
 	"sync"
 	"syscall"
 )
@@ -122,6 +123,20 @@ func (proc KProc) Jailbreak(escapeSandbox bool) {
 	KernelCopyin(uintptr(ucred)+0x83, attr_store[0:1]) // cr_sceAttr[0]
 }
 
+func (proc KProc) EscalatePrivileges() {
+	ucred := proc.GetUcred()
+	attr_store := []byte{0x80, 0, 0, 0, 0, 0, 0, 0}
+
+	ucred.SetUid(0)
+	ucred.SetRuid(0)
+	ucred.SetSvuid(0)
+	ucred.SetNgroups(0)
+	ucred.SetRgid(0)
+
+	ucred.SetSceCaps(^uint64(0), ^uint64(0))
+	KernelCopyin(uintptr(ucred)+0x83, attr_store[0:1]) // cr_sceAttr[0]
+}
+
 func (proc KProc) GetSharedObject() SharedObject {
 	return SharedObject(Kread64(uintptr(proc) + _PROC_SHARED_OBJECT_OFFSET))
 }
@@ -151,4 +166,13 @@ func (proc KProc) GetPath() string {
 	}
 	res, _ := KernelCopyoutString(uintptr(addr))
 	return res
+}
+
+func (proc KProc) DumpLibs() {
+	obj := proc.GetSharedObject()
+	if obj == 0 {
+		log.Println(("no libs"))
+	} else {
+		obj.DumpLibs()
+	}
 }

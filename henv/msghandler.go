@@ -92,7 +92,7 @@ func readAppLaunchPrefixHandler(rw AppMessageReadWriter, id uint32, buf []byte) 
 }
 
 func replyPayloadNumberRequest(rw AppMessageReadWriter) {
-	p, ok := rw.(*LocalProcess)
+	p, ok := rw.(*Payload)
 	if !ok {
 		log.Println(ErrNonPayloadNumRequester)
 		msg := MsgBuffer{}

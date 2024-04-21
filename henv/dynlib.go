@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log"
 	"slices"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -88,6 +89,10 @@ func GetModuleInfo(pid int, handle int, info *DynlibModuleInfo) error {
 func GetModuleHandle(pid int, name string) int {
 	if len(name) > _MAX_MODULE_NAME_LENGTH {
 		return -1
+	}
+
+	if !strings.HasSuffix(name, ".sprx") {
+		name += ".sprx"
 	}
 
 	handles := GetModuleHandles(pid)

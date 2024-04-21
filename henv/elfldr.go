@@ -291,8 +291,7 @@ func (ldr *ElfLoader) getString(i int) string {
 }
 
 func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib string) (int, error) {
-	lib += ".sprx"
-	id := syscall.GetInternalPrxId(lib)
+	id := syscall.GetInternalPrxId(lib + ".sprx")
 	if id != 0 {
 		res, err := ldr.tracer.Call(id_loader, id, 0, 0, 0, 0, 0)
 		if err != nil || res == -1 {
@@ -301,18 +300,24 @@ func (ldr *ElfLoader) loadLibrary(id_loader, name_loader, mem uintptr, lib strin
 			return 0, err
 		}
 	} else {
-		_, err := UserlandCopyinUnsafe(ldr.pid, mem, unsafe.Pointer(&([]byte(lib)[0])), len(lib))
+		clib, err := syscall.BytePtrFromString(lib)
+		if err != nil {
+			log.Println(err)
+			return 0, err
+		}
+		_, err = UserlandCopyinUnsafe(ldr.pid, mem, unsafe.Pointer(clib), len(lib)+1)
 		if err != nil {
 			log.Println(err)
 			return 0, err
 		}
 
 		res, err := ldr.tracer.Call(name_loader, mem, 0, 0, 0, 0, 0)
-		if err != nil || res == -1 {
+		if err != nil || int32(res) < 0 {
 			err = fmt.Errorf("failed to load lib %s", lib)
 			log.Println(err)
 			return 0, err
 		}
+		return res, nil
 	}
 	return GetModuleHandle(ldr.pid, lib), nil
 }

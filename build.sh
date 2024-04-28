@@ -3,6 +3,7 @@ if [ ! -z "$PROSPEROGO" ]; then
   export $PATH=$PROSPEROGO:$PATH
 fi
 export GOOS=prospero
+export GOAMD64=v3
 ninja clean > /dev/null 2>&1
 cd daemon
 go build -o daemon.elf

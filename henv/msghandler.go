@@ -98,7 +98,7 @@ func replyPayloadNumberRequest(rw AppMessageReadWriter) {
 		msg := MsgBuffer{}
 		msg.PutUint16(0xffff)
 		msg.PutString(ErrNonPayloadNumRequester.Error())
-		p.Write(msg.Bytes())
+		rw.WriteMessage(HENV_MSG_TYPE_GET_PAYLOAD_NUMBER, msg.Bytes())
 		return
 	}
 	msg := make([]byte, 2)

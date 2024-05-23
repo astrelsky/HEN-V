@@ -695,7 +695,7 @@ func (ldr *ElfLoader) setupKernelRW() (addr uintptr, err error) {
 		proc := ldr.getProc()
 		lib := proc.GetLib(LIBKERNEL_HANDLE)
 		if lib == 0 {
-			proc.GetLib(1)
+			lib = proc.GetLib(1)
 		}
 		dlsym = lib.GetAddress(DLSYM_NID)
 		if dlsym == 0 {
